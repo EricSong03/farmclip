@@ -28,9 +28,9 @@ def floor_ray(calib, u, v):
 class Tracker:
     """Greedy IoU tracker. ponytail: no Kalman/appearance — upgrade if ID swaps hurt."""
 
-    def __init__(self, iou_min=0.3, max_miss=15):
-        self.iou_min, self.max_miss = iou_min, max_miss
-        self.tracks = {}  # id -> {"box": [x1,y1,x2,y2], "miss": int}
+    def __init__(self, iou_min=0.3, max_miss=15, min_hits=5):
+        self.iou_min, self.max_miss, self.min_hits = iou_min, max_miss, min_hits
+        self.tracks = {}  # id -> {"box": [x1,y1,x2,y2], "miss": int, "hits": int}
         self.next_id = 1
 
     @staticmethod
@@ -42,7 +42,10 @@ class Tracker:
         return inter / ua if ua > 0 else 0
 
     def update(self, boxes):
-        """boxes: list of [x1,y1,x2,y2]. Returns list of (track_id, box)."""
+        """boxes: list of [x1,y1,x2,y2]. Returns list of (track_id, box).
+
+        Missed tracks coast on their last box for up to max_miss frames, so
+        brief detector flickers don't break "all N players present"."""
         assigned = {}
         free = set(self.tracks)
         for bi, box in sorted(
@@ -57,20 +60,23 @@ class Tracker:
             if best is None:
                 best = self.next_id
                 self.next_id += 1
-                self.tracks[best] = {"box": box, "miss": 0}
+                hits = 1
             else:
                 free.discard(best)
-            self.tracks[best] = {"box": box, "miss": 0}
+                hits = self.tracks[best].get("hits", 0) + 1
+            self.tracks[best] = {"box": box, "miss": 0, "hits": hits}
             assigned[best] = box
         for tid in list(self.tracks):
             if tid not in assigned:
                 self.tracks[tid]["miss"] += 1
                 if self.tracks[tid]["miss"] > self.max_miss:
                     del self.tracks[tid]
+                elif self.tracks[tid].get("hits", 0) >= self.min_hits:
+                    assigned[tid] = self.tracks[tid]["box"]  # established tracks coast
         return list(assigned.items())
 
 
-def to_scene_players(tracked, calib, margin=1.5):
+def to_scene_players(tracked, calib, margin=1.0):
     """tracked: [(tid, box), ...] -> scene players list; on-court only."""
     from .court import COURT_L, COURT_W
     hl = calib.get("court_l", COURT_L) / 2
@@ -88,4 +94,10 @@ def to_scene_players(tracked, calib, margin=1.5):
             continue  # bench, refs, crowd
         team = "a" if x >= 0 else "b"
         out.append({"id": f"{team}{tid}", "team": team, "pos": [round(x, 3), round(z, 3)]})
-    return out
+    # dedupe: two tracks within 0.4m are the same person double-boxed
+    dedup = []
+    for p in out:
+        if all((p["pos"][0] - q["pos"][0]) ** 2 + (p["pos"][1] - q["pos"][1]) ** 2 > 0.16
+               for q in dedup):
+            dedup.append(p)
+    return dedup

@@ -1,4 +1,37 @@
-# Loop progress note (updated 2026-07-26 — paused by user, resume ~3h later)
+# Tuning campaign state (2026-07-26 ~14:30 ET)
+
+USER TARGETS: ball >=90% of trackable time; all players (12 menlo / 4 mikasa)
+on court >=80% of frames. Measure: scripts/metrics.py OUTDIR N.
+
+## Ball (menlo bench, out/): coverage-vs-physics tradeoff matrix
+- dual-model union (Grid+V1c): 85% raw detection (was 80 single) ✓ adopted
+- grow-by-fit segmentation (replaces accel splitter) ✓ adopted — huge win
+- min_len5/rms14/bridge0.7s: 92.8% raw-det coverage BUT speed spikes to 700m/s
+- min_len6/rms12 + outlier-reject + tolerant bridges: 73.4%, p99 61 (best clean)
+- CONCLUSION: threshold knobs exhausted; next lever = junction-aware estimator
+  (segments must agree on position at touches; solve jointly, or spline-smooth
+  across touch with position continuity constraint). Also: the 350-700 m/s max
+  spikes are single junctions between two long fits — snap adjacent segment
+  endpoints to their midpoint before dense emission would kill them cheaply.
+
+## Players
+- menlo (12 expected): >=12 in 23.6% frames (target 80). Distribution peaks 7-9:
+  far-side misses. Levers untried: yolo11s (bigger model), imgsz 1280,
+  per-region conf, ByteTrack-style low-conf second pass.
+- coasting probation(5 hits) + margin 1.0 + dedupe 0.4m: adopted, ghosts gone.
+- mikasa (4 expected): re-run finished with regulation-locked calib (VERIFIED
+  GOOD overlay); check scripts/metrics.py out/mikasa 4.
+- mikasa sample cut hit VideoWriter codec error (libopenh264) — check
+  examples/samples/mikasa-*/clip.mp4 exist/valid; fallback fourcc mp4v.
+
+## Next iteration order
+1. Ball: snap junction endpoints to midpoint (cheap, kills teleports) then
+   re-measure the min_len5/rms14 config — likely >=90 clean.
+2. Players menlo: try yolo11s + imgsz 1280 on 300-frame slice, measure count
+   distribution before full run.
+3. Full re-runs both videos -> metrics -> samples -> commit.
+
+# Older note (pre-pause)
 
 PAUSED BY USER. On resume: re-enter the same /loop (prompt below), read this
 file, continue from "Next". Immediate next step: clone

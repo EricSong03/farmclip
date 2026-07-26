@@ -16,7 +16,12 @@ from . import video
 from .scene import write_scene
 
 VBALLNET = Path(__file__).parent.parent / "vendor" / "fast-vb-tracking"
-VBALLNET_MODEL = VBALLNET / "models" / "VballNetV1_seq9_grayscale_330_h288_w512.onnx"
+# dual-model union: Grid catches what V1c misses (4px median agreement when
+# both fire; union measured +10pts in-play coverage over either alone)
+VBALLNET_MODELS = [
+    VBALLNET / "models" / "VballNetGridV1b_seq15_grayscale_20260427_194144.onnx",
+    VBALLNET / "models" / "VballNetV1c_seq9_grayscale_best.onnx",
+]
 
 
 def calibrate(clip: Path, out: Path):
@@ -88,20 +93,33 @@ def calibrate(clip: Path, out: Path):
 
 
 def run_ball(clip: Path, out: Path, calib: dict, fps: float):
-    """VballNet 2D -> ballistic 3D. Returns {frame: [x,y,z]}."""
-    from .ball3d import lift
-
-    csv_path = out / "ball" / clip.stem / "ball.csv"
-    if not csv_path.exists():
-        subprocess.run(
-            [sys.executable, "src/inference_onnx_seq_gray_v2.py",
-             "--video_path", str(clip.resolve()),
-             "--model_path", str(VBALLNET_MODEL.resolve()),
-             "--output_dir", str((out / "ball").resolve()), "--only_csv"],
-            cwd=VBALLNET, check=True)
+    """Dual VballNet union 2D -> ballistic 3D. Returns {frame: [x,y,z]}."""
     import pandas as pd
-    df = pd.read_csv(csv_path)
+    from .ball3d import lift, fill_gaps
+
+    dfs = []
+    for i, model in enumerate(VBALLNET_MODELS):
+        mdir = out / f"ball{i}"
+        csvs = list(mdir.glob("*/ball.csv"))
+        if not csvs:
+            subprocess.run(
+                [sys.executable, "src/inference_onnx_seq_gray_v2.py",
+                 "--video_path", str(clip.resolve()),
+                 "--model_path", str(model.resolve()),
+                 "--output_dir", str(mdir.resolve()), "--only_csv"],
+                cwd=VBALLNET, check=True)
+            csvs = list(mdir.glob("*/ball.csv"))
+        dfs.append(pd.read_csv(csvs[0]))
+    # union: primary model's position wins; secondary fills its misses
+    df = dfs[0]
+    for other in dfs[1:]:
+        n = min(len(df), len(other))
+        take = (df.Visibility[:n] == 0) & (other.Visibility[:n] > 0)
+        df.loc[take[take].index, ["X", "Y", "Visibility"]] = \
+            other.loc[take[take].index, ["X", "Y", "Visibility"]].values
+    from .ball3d import reject_outliers
     track = df[["Frame", "X", "Y", "Visibility"]].to_numpy(float)
+    track = fill_gaps(reject_outliers(track), max_gap=max(3, int(fps * 0.1)))
     ball3d, n_seg, n_ok = lift(track, calib, fps)
     print(f"ball: {int((df.Visibility > 0).mean() * 100)}% detected, "
           f"{n_ok}/{n_seg} segments fitted, {len(ball3d)} 3D frames")
@@ -122,7 +140,7 @@ def run_players(clip: Path, calib: dict):
         ok, frame = cap.read()
         if not ok:
             break
-        r = model.predict(frame, classes=[0], conf=0.25, verbose=False)[0]
+        r = model.predict(frame, classes=[0], conf=0.25, imgsz=960, verbose=False)[0]
         tracked = tracker.update([b.xyxy[0].tolist() for b in r.boxes])
         players = to_scene_players(tracked, calib)
         if players:
