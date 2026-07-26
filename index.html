@@ -25,20 +25,17 @@
     <input type="file" id="file" accept="video/*">
     <button id="process" disabled>Process on server</button>
     <input type="file" id="sceneFile" accept=".json,application/json">
-    <button id="calibrate" disabled>Calibrate (stub)</button>
-    <button id="reset">Reset points</button>
     <span id="sceneCtrls" hidden>
       <button id="scenePlay">▶</button>
       <input type="range" id="scrub" min="0" max="3" step="0.001" value="0">
     </span>
   </div>
-  <div class="hint">Upload a stationary vod, then click the 4 court corners in order:
-    near-left → near-right → far-right → far-left.</div>
+  <div class="hint">Load a clip + its scene.json (e.g. examples/samples/menlo-min0/) and press play —
+    the 3D view follows the video. Or upload a new vod and "Process on server".</div>
   <div id="status">No video loaded.</div>
   <div id="gaps"></div>
   <div id="videoWrap">
     <video id="video" controls muted></video>
-    <canvas id="overlay"></canvas>
   </div>
 </div>
 <div id="right"><div id="scene"></div></div>
@@ -53,69 +50,20 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// ---------- video upload + corner picking ----------
+// ---------- video upload ----------
 const video = document.getElementById('video');
-const overlay = document.getElementById('overlay');
 const status = document.getElementById('status');
-const calibrateBtn = document.getElementById('calibrate');
-let corners = []; // normalized [0..1] coords in video space
 
 document.getElementById('file').onchange = e => {
   const f = e.target.files[0];
   if (!f) return;
   video.src = URL.createObjectURL(f);
-  corners = [];
-  status.textContent = `Loaded ${f.name}. Pause on a clear frame and click the 4 corners.`;
+  status.textContent = `Loaded ${f.name}. Load its scene.json (or Process on server), then play.`;
   playing = false;
   updateSceneUI(); // video becomes the master clock; hide the standalone scrubber
   videoFile = f;
   processBtn.disabled = false;
 };
-
-function drawOverlay() {
-  overlay.width = overlay.clientWidth;
-  overlay.height = overlay.clientHeight;
-  const ctx = overlay.getContext('2d');
-  ctx.clearRect(0, 0, overlay.width, overlay.height);
-  ctx.fillStyle = '#0f0';
-  ctx.strokeStyle = '#0f0';
-  corners.forEach((c, i) => {
-    const x = c[0] * overlay.width, y = c[1] * overlay.height;
-    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillText(i + 1, x + 8, y - 8);
-  });
-  if (corners.length > 1) {
-    ctx.beginPath();
-    corners.forEach((c, i) => ctx[i ? 'lineTo' : 'moveTo'](c[0] * overlay.width, c[1] * overlay.height));
-    if (corners.length === 4) ctx.closePath();
-    ctx.stroke();
-  }
-}
-
-overlay.onclick = e => {
-  if (!video.src || corners.length >= 4) return;
-  const r = overlay.getBoundingClientRect();
-  corners.push([(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]);
-  drawOverlay();
-  status.textContent = `${corners.length}/4 corners picked.`;
-  calibrateBtn.disabled = corners.length !== 4;
-};
-
-document.getElementById('reset').onclick = () => {
-  corners = [];
-  calibrateBtn.disabled = true;
-  drawOverlay();
-  status.textContent = 'Points cleared.';
-};
-
-calibrateBtn.onclick = () => {
-  // ponytail: stub — real version solves homography/camera pose from these
-  // 4 image↔world correspondences (cv2.solvePnP server-side or a JS DLT).
-  console.log('corners (normalized):', corners);
-  status.textContent = 'Calibration stub: corners logged to console. Pose solve TBD.';
-};
-
-new ResizeObserver(drawOverlay).observe(overlay);
 
 // ---------- 3D court model (FIVB dims, meters) ----------
 const COURT_L = 18, COURT_W = 9, NET_H = 2.43, NET_W = 9.5, ATTACK = 3;
