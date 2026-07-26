@@ -161,7 +161,8 @@ def search_headon(segs, net_band, w, h, verbose=False):
             floor_pairs = [(segF, ((fx, 0, -HW), (fx, 0, +HW)))]
             calib = polish(dict(best0), floor_pairs, band_seg=net_band, post_px=post_px)
             C = _cam_center(calib)
-            if not (0.5 <= C[1] <= 6 and abs(C[0]) > HL / 2 - 2):
+            hl_solved = calib.get("court_l", 2 * HL) / 2  # gate vs SOLVED dims, not regulation
+            if not (0.5 <= C[1] <= 6 and abs(C[0]) > hl_solved - 2):
                 continue
             n_in, support = _seg_support(calib, segs)
             key = (n_in, support, -calib["err"])

@@ -72,7 +72,9 @@ class Tracker:
 
 def to_scene_players(tracked, calib, margin=1.5):
     """tracked: [(tid, box), ...] -> scene players list; on-court only."""
-    from .court import HL, HW
+    from .court import COURT_L, COURT_W
+    hl = calib.get("court_l", COURT_L) / 2
+    hw = calib.get("court_w", COURT_W) / 2
     img_h = calib["img_h"]
     out = []
     for tid, (x1, y1, x2, y2) in tracked:
@@ -82,7 +84,7 @@ def to_scene_players(tracked, calib, margin=1.5):
         if pos is None:
             continue
         x, z = pos
-        if abs(x) > HL / 2 + margin or abs(z) > HW + margin:
+        if abs(x) > hl + margin or abs(z) > hw + margin:
             continue  # bench, refs, crowd
         team = "a" if x >= 0 else "b"
         out.append({"id": f"{team}{tid}", "team": team, "pos": [round(x, 3), round(z, 3)]})

@@ -33,13 +33,15 @@ def _line_res(seg, pts2d, h):
 
 
 def _residuals(params, w, h, floor_pairs, band_seg, post_px):
-    f, rx, ry, rz, tx, ty, tz, net_h, post_hw = params
+    f, rx, ry, rz, tx, ty, tz, net_h, post_hw, sx, sz = params
     K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], float)
     rvec = np.array([rx, ry, rz])
     tvec = np.array([tx, ty, tz])
+    scale = np.array([sx, 1.0, sz])  # non-regulation courts: scale floor x/z
     res = []
     for seg, (a, b) in floor_pairs:
-        res += _line_res(seg, _project(K, rvec, tvec, np.linspace(a, b, 12)), h)
+        pts = np.linspace(a, b, 12) * scale
+        res += _line_res(seg, _project(K, rvec, tvec, pts), h)
     if band_seg is not None:
         band3d = np.linspace((0, net_h, -post_hw), (0, net_h, +post_hw), 12)
         res += _line_res(band_seg, _project(K, rvec, tvec, band3d), h)
@@ -53,18 +55,20 @@ def _residuals(params, w, h, floor_pairs, band_seg, post_px):
 def polish(calib, floor_pairs, band_seg=None, post_px=()):
     """post_px: [((u, v), z_sign), ...] measured post bases; z_sign +1 = image-left post."""
     w, h = calib["img_w"], calib["img_h"]
-    x0 = np.array([calib["f"], *calib["rvec"], *calib["tvec"], 2.43, 4.75], float)
+    x0 = np.array([calib["f"], *calib["rvec"], *calib["tvec"], 2.43, 4.75, 1.0, 1.0], float)
     out = least_squares(
         _residuals, x0, args=(w, h, floor_pairs, band_seg, post_px),
-        loss="soft_l1", f_scale=4.0, max_nfev=600,
-        bounds=([0.4 * w, -np.pi, -np.pi, -np.pi, -60, -60, -60, 2.20, 4.55],
-                [2.0 * w, np.pi, np.pi, np.pi, 60, 60, 60, 2.55, 5.60]),
+        loss="soft_l1", f_scale=4.0, max_nfev=800,
+        bounds=([0.4 * w, -np.pi, -np.pi, -np.pi, -60, -60, -60, 2.20, 4.55, 0.62, 0.62],
+                [2.0 * w, np.pi, np.pi, np.pi, 60, 60, 60, 2.55, 5.60, 1.05, 1.05]),
     )
-    f, rx, ry, rz, tx, ty, tz, net_h, post_hw = out.x
+    f, rx, ry, rz, tx, ty, tz, net_h, post_hw, sx, sz = out.x
     r = _residuals(out.x, w, h, floor_pairs, band_seg, post_px)
+    from .court import COURT_L, COURT_W
     return {
         "img_w": w, "img_h": h, "f": float(f),
         "rvec": [rx, ry, rz], "tvec": [tx, ty, tz],
         "net_h": float(net_h), "post_hw": float(post_hw),
+        "court_l": float(COURT_L * sx), "court_w": float(COURT_W * sz),
         "err": float(np.sqrt(np.mean(r ** 2))), "per_point_err": {},
     }
