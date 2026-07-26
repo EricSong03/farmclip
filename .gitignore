@@ -1,0 +1,8 @@
+.claude/settings.local.json
+out/
+vendor/
+.venv/
+*.pt
+examples/*.mp4
+examples/samples/**/clip.mp4
+__pycache__/
