@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>farmclip — volleyball 3D</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #eee; display: flex; height: 100vh; }
+  #left, #right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #left { border-right: 1px solid #333; padding: 12px; gap: 8px; }
+  #videoWrap { position: relative; flex: 1; min-height: 0; }
+  video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #overlay { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; }
+  #scene { flex: 1; }
+  #status { font-size: 13px; color: #9c9; }
+  #gaps { font-size: 12px; color: #c96; }
+  #scrub { vertical-align: middle; width: 150px; }
+  button { background: #2a6; color: #fff; border: 0; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
+  button:disabled { background: #444; }
+  .hint { font-size: 12px; color: #888; }
+</style>
+</head>
+<body>
+<div id="left">
+  <div>
+    <input type="file" id="file" accept="video/*">
+    <button id="process" disabled>Process on server</button>
+    <input type="file" id="sceneFile" accept=".json,application/json">
+    <button id="calibrate" disabled>Calibrate (stub)</button>
+    <button id="reset">Reset points</button>
+    <span id="sceneCtrls" hidden>
+      <button id="scenePlay">▶</button>
+      <input type="range" id="scrub" min="0" max="3" step="0.001" value="0">
+    </span>
+  </div>
+  <div class="hint">Upload a stationary vod, then click the 4 court corners in order:
+    near-left → near-right → far-right → far-left.</div>
+  <div id="status">No video loaded.</div>
+  <div id="gaps"></div>
+  <div id="videoWrap">
+    <video id="video" controls muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
+</div>
+<div id="right"><div id="scene"></div></div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- video upload + corner picking ----------
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const status = document.getElementById('status');
+const calibrateBtn = document.getElementById('calibrate');
+let corners = []; // normalized [0..1] coords in video space
+
+document.getElementById('file').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  video.src = URL.createObjectURL(f);
+  corners = [];
+  status.textContent = `Loaded ${f.name}. Pause on a clear frame and click the 4 corners.`;
+  playing = false;
+  updateSceneUI(); // video becomes the master clock; hide the standalone scrubber
+  videoFile = f;
+  processBtn.disabled = false;
+};
+
+function drawOverlay() {
+  overlay.width = overlay.clientWidth;
+  overlay.height = overlay.clientHeight;
+  const ctx = overlay.getContext('2d');
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  ctx.fillStyle = '#0f0';
+  ctx.strokeStyle = '#0f0';
+  corners.forEach((c, i) => {
+    const x = c[0] * overlay.width, y = c[1] * overlay.height;
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillText(i + 1, x + 8, y - 8);
+  });
+  if (corners.length > 1) {
+    ctx.beginPath();
+    corners.forEach((c, i) => ctx[i ? 'lineTo' : 'moveTo'](c[0] * overlay.width, c[1] * overlay.height));
+    if (corners.length === 4) ctx.closePath();
+    ctx.stroke();
+  }
+}
+
+overlay.onclick = e => {
+  if (!video.src || corners.length >= 4) return;
+  const r = overlay.getBoundingClientRect();
+  corners.push([(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]);
+  drawOverlay();
+  status.textContent = `${corners.length}/4 corners picked.`;
+  calibrateBtn.disabled = corners.length !== 4;
+};
+
+document.getElementById('reset').onclick = () => {
+  corners = [];
+  calibrateBtn.disabled = true;
+  drawOverlay();
+  status.textContent = 'Points cleared.';
+};
+
+calibrateBtn.onclick = () => {
+  // ponytail: stub — real version solves homography/camera pose from these
+  // 4 image↔world correspondences (cv2.solvePnP server-side or a JS DLT).
+  console.log('corners (normalized):', corners);
+  status.textContent = 'Calibration stub: corners logged to console. Pose solve TBD.';
+};
+
+new ResizeObserver(drawOverlay).observe(overlay);
+
+// ---------- 3D court model (FIVB dims, meters) ----------
+const COURT_L = 18, COURT_W = 9, NET_H = 2.43, NET_W = 9.5, ATTACK = 3;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2a);
+const container = document.getElementById('scene');
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
+camera.position.set(14, 10, 14);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+container.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1, 0);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334, 1.2));
+
+// floor
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(COURT_L + 6, COURT_W + 6),
+  new THREE.MeshLambertMaterial({ color: 0xc2703d })
+);
+floor.rotation.x = -Math.PI / 2;
+scene.add(floor);
+
+// court lines (white strips slightly above floor)
+const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+function line(x, z, lx, lz) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(lx, lz), lineMat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(x, 0.01, z);
+  scene.add(m);
+}
+const T = 0.05; // line half-thickness
+line(0, -COURT_W / 2, COURT_L, T * 2);            // sideline
+line(0, COURT_W / 2, COURT_L, T * 2);             // sideline
+line(-COURT_L / 2, 0, T * 2, COURT_W);            // end line
+line(COURT_L / 2, 0, T * 2, COURT_W);             // end line
+line(0, 0, T * 2, COURT_W);                       // center line
+line(-ATTACK, 0, T * 2, COURT_W);                 // attack lines
+line(ATTACK, 0, T * 2, COURT_W);
+
+// net
+const net = new THREE.Mesh(
+  new THREE.PlaneGeometry(NET_W, 1),
+  new THREE.MeshBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+);
+net.rotation.y = Math.PI / 2;
+net.position.set(0, NET_H - 0.5, 0);
+scene.add(net);
+// net top band + posts
+const bandMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const band = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.07, NET_W), bandMat);
+band.position.set(0, NET_H, 0);
+scene.add(band);
+const posts = [];
+for (const s of [-1, 1]) {
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, NET_H + 0.12), bandMat);
+  post.position.set(0, (NET_H + 0.12) / 2, s * NET_W / 2);
+  scene.add(post);
+  posts.push(post);
+}
+
+function applyNetHeight(h) {
+  net.position.y = h - 0.5;
+  band.position.y = h;
+  for (const post of posts) {
+    post.scale.y = (h + 0.12) / (NET_H + 0.12);
+    post.position.y = (h + 0.12) / 2;
+  }
+}
+
+// ---------- scene JSON viewer (docs/specs/scene-format.md) ----------
+const GAP_MAX_S = 0.15; // ponytail: interpolate detector flicker up to this; longer gaps hide + report
+
+const gapsEl = document.getElementById('gaps');
+const sceneCtrls = document.getElementById('sceneCtrls');
+const playBtn = document.getElementById('scenePlay');
+const scrub = document.getElementById('scrub');
+
+let ballTrack = [];                 // [t, x, y, z]
+let playerTracks = new Map();       // id -> { team, samples: [[t, x, z], ...] }
+let sceneLoaded = false, playing = false, playT = 0;
+const viewClock = new THREE.Clock();
+
+const TEAM_COLORS = { a: 0x3ec6dd, b: 0xe8604c };
+const ball = new THREE.Mesh(
+  new THREE.SphereGeometry(0.105, 16, 12),
+  new THREE.MeshLambertMaterial({ color: 0xffd447 })
+);
+ball.visible = false;
+scene.add(ball);
+const playerMeshes = new Map();     // id -> cylinder mesh
+
+// samples: [[t, ...coords]] sorted by t. Returns interpolated coords or null (no data / big gap).
+function sampleTrack(samples, t) {
+  const n = samples.length;
+  if (!n || t < samples[0][0] || t > samples[n - 1][0]) return null;
+  // ponytail: linear scan every frame; cache a cursor if clips ever get long enough to matter
+  let i = 0;
+  while (i + 1 < n && samples[i + 1][0] <= t) i++;
+  const A = samples[i], B = samples[Math.min(i + 1, n - 1)];
+  const dt = B[0] - A[0];
+  if (dt > GAP_MAX_S) return t - A[0] < 1e-6 ? A.slice(1) : null;
+  const u = dt > 0 ? (t - A[0]) / dt : 0;
+  return A.slice(1).map((v, k) => v + (B[k + 1] - v) * u);
+}
+
+function renderSceneAt(t) {
+  const b = sampleTrack(ballTrack, t);
+  ball.visible = !!b;
+  if (b) ball.position.set(b[0], b[1], b[2]);
+  for (const [id, tr] of playerTracks) {
+    let m = playerMeshes.get(id);
+    if (!m) {
+      m = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.25, 0.25, 1.8),
+        new THREE.MeshLambertMaterial({ color: TEAM_COLORS[tr.team] ?? 0x999999 })
+      );
+      scene.add(m);
+      playerMeshes.set(id, m);
+    }
+    const p = sampleTrack(tr.samples, t);
+    m.visible = !!p;
+    if (p) m.position.set(p[0], 0.9, p[1]);
+  }
+}
+
+function reportGaps() {
+  const gaps = []; // ponytail: ball only; player dropouts just hide silently for now
+  for (let i = 1; i < ballTrack.length; i++) {
+    const a = ballTrack[i - 1][0], b = ballTrack[i][0];
+    if (b - a > GAP_MAX_S) gaps.push(`ball: no data ${a.toFixed(1)}–${b.toFixed(1)}s`);
+  }
+  gapsEl.textContent = gaps.join(' · ');
+}
+
+// standalone scrubber only when there's no video (video's own controls are the timeline otherwise)
+function updateSceneUI() {
+  sceneCtrls.hidden = !sceneLoaded || !!video.src;
+}
+
+function loadScene(data, label) {
+  if (data.version !== 1 || !Array.isArray(data.frames)) {
+    status.textContent = `${label}: not a v1 scene file (see docs/specs/scene-format.md).`;
+    return;
+  }
+  ballTrack = [];
+  playerTracks = new Map();
+  for (const m of playerMeshes.values()) scene.remove(m);
+  playerMeshes.clear();
+  for (const fr of data.frames) {
+    if (Array.isArray(fr.ball)) ballTrack.push([fr.t, ...fr.ball]);
+    for (const p of fr.players ?? []) {
+      let tr = playerTracks.get(p.id);
+      if (!tr) playerTracks.set(p.id, tr = { team: p.team, samples: [] });
+      // pos is [x,z] or [x,y,z] (spec allows both; capsules sit on the floor either way)
+      tr.samples.push(p.pos.length === 3 ? [fr.t, p.pos[0], p.pos[2]] : [fr.t, ...p.pos]);
+    }
+  }
+  applyNetHeight(data.net_height ?? NET_H);
+  const dur = data.frames.length ? data.frames[data.frames.length - 1].t : 0;
+  scrub.max = dur;
+  playT = 0;
+  scrub.value = 0;
+  sceneLoaded = true;
+  reportGaps();
+  updateSceneUI();
+  renderSceneAt(0);
+  status.textContent = `Scene loaded: ${data.frames.length} frames, ${dur.toFixed(1)}s, ${playerTracks.size} players.`;
+}
+
+document.getElementById('sceneFile').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try { loadScene(JSON.parse(await f.text()), f.name); }
+  catch { status.textContent = `${f.name}: not valid JSON.`; }
+};
+
+// ---------- upload & process on the local server (farmclip.py serve) ----------
+const processBtn = document.getElementById('process');
+let videoFile = null;
+
+processBtn.onclick = async () => {
+  processBtn.disabled = true;
+  status.textContent = 'Uploading…';
+  try {
+    const fd = new FormData();
+    fd.append('file', videoFile);
+    const { id } = await (await fetch('/api/upload', { method: 'POST', body: fd })).json();
+    const poll = setInterval(async () => {
+      const job = await (await fetch(`/api/jobs/${id}`)).json();
+      if (job.error) {
+        clearInterval(poll);
+        status.textContent = `Processing failed: ${job.error}`;
+        processBtn.disabled = false;
+      } else if (job.done) {
+        clearInterval(poll);
+        loadScene(await (await fetch(`/api/jobs/${id}/scene.json`)).json(), 'server scene');
+        processBtn.disabled = false;
+      } else {
+        status.textContent = `Processing: ${job.stage}…`;
+      }
+    }, 1000);
+  } catch {
+    status.textContent = 'Server not reachable — start it with: uv run farmclip.py serve';
+    processBtn.disabled = false;
+  }
+};
+
+playBtn.onclick = () => {
+  playing = !playing;
+  playBtn.textContent = playing ? '❚❚' : '▶';
+};
+scrub.oninput = () => { playT = +scrub.value; };
+
+// self-check: sampleTrack lerps, respects the gap rule, and clamps outside the track
+console.assert(sampleTrack([[0, 0, 0], [0.1, 1, 2]], 0.05).every((v, i) => Math.abs(v - [0.5, 1][i]) < 1e-9), 'lerp');
+console.assert(sampleTrack([[0, 0], [1, 5]], 0.5) === null, 'gap hides');
+console.assert(sampleTrack([[0, 0], [1, 5]], 2) === null, 'clamp');
+
+function resize() {
+  const w = container.clientWidth, h = container.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+new ResizeObserver(resize).observe(container);
+resize();
+
+renderer.setAnimationLoop(() => {
+  const dt = viewClock.getDelta();
+  controls.update();
+  if (sceneLoaded) {
+    if (video.src) {
+      playT = video.currentTime; // video is the master clock
+    } else if (playing) {
+      playT += dt;
+      if (playT > +scrub.max) playT = 0;
+      scrub.value = playT;
+    }
+    renderSceneAt(playT);
+  }
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
