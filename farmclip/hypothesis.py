@@ -104,7 +104,7 @@ def search_headon(segs, net_band, w, h, verbose=False):
     bx_lo, bx_hi = min(net_band[0], net_band[2]), max(net_band[0], net_band[2])
     by = (net_band[1] + net_band[3]) / 2
     verts = [s for s in segs if slope(s) > 3 and abs(s[3] - s[1]) > 40
-             and bx_lo - 60 <= (s[0] + s[2]) / 2 <= bx_hi + 60
+             and bx_lo - 130 <= (s[0] + s[2]) / 2 <= bx_hi + 130  # pads bulge past the band ends
              and max(s[1], s[3]) > by]  # extends below the band = a post, not rigging
     if len(verts) < 2:
         return None, None
@@ -151,26 +151,36 @@ def search_headon(segs, net_band, w, h, verbose=False):
     if best0 is None:
         return None, None
 
-    horiz = [s for s in segs if slope(s) < 0.15 and (s[1] + s[3]) / 2 > by + 60
+    horiz = [s for s in segs if slope(s) < 0.15 and (s[1] + s[3]) / 2 > by + 40
              and abs(s[2] - s[0]) > w * 0.4]
+    # two floor lines at different depths are required, else the free-dims
+    # polish is underdetermined and converges to degenerate poses
+    far_cands = [s for s in horiz if (s[1] + s[3]) / 2 < by + 150]
+    near_cands = [s for s in horiz if (s[1] + s[3]) / 2 > h * 0.55]
     best = None
     post_px = [(pairs[1][0], +1), (pairs[3][0], -1)]
-    for segF in horiz:
-        for far_name in ("end_near", "attack_near"):
-            fx = HL if far_name == "end_near" else ATTACK
-            floor_pairs = [(segF, ((fx, 0, -HW), (fx, 0, +HW)))]
-            calib = polish(dict(best0), floor_pairs, band_seg=net_band, post_px=post_px)
-            C = _cam_center(calib)
-            hl_solved = calib.get("court_l", 2 * HL) / 2  # gate vs SOLVED dims, not regulation
-            if not (0.5 <= C[1] <= 6 and abs(C[0]) > hl_solved - 2):
-                continue
-            n_in, support = _seg_support(calib, segs)
-            key = (n_in, support, -calib["err"])
-            if best is None or key > best[0]:
-                best = (key, calib, {"family": "headon", "floor": far_name,
-                                     "n_inliers": n_in, "err": calib["err"]})
-                if verbose:
-                    print("headon best", best[2])
+    for segFar in far_cands:
+        for far_name in ("end_far", "attack_far"):
+            ffx = -HL if far_name == "end_far" else -ATTACK
+            for segNear in near_cands:
+                for near_name in ("end_near", "attack_near"):
+                    fx = HL if near_name == "end_near" else ATTACK
+                    floor_pairs = [(segFar, ((ffx, 0, -HW), (ffx, 0, +HW))),
+                                   (segNear, ((fx, 0, -HW), (fx, 0, +HW)))]
+                    calib = polish(dict(best0), floor_pairs, band_seg=net_band,
+                                   post_px=post_px)
+                    C = _cam_center(calib)
+                    hl_solved = calib.get("court_l", 2 * HL) / 2  # gate vs SOLVED dims
+                    if not (0.5 <= C[1] <= 6 and abs(C[0]) > hl_solved - 2):
+                        continue
+                    n_in, support = _seg_support(calib, segs)
+                    key = (n_in, support, -calib["err"])
+                    if best is None or key > best[0]:
+                        best = (key, calib,
+                                {"family": "headon", "far": far_name, "near": near_name,
+                                 "n_inliers": n_in, "err": calib["err"]})
+                        if verbose:
+                            print("headon best", best[2])
     if best is None:
         return None, None
     return best[1], best[2]

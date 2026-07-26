@@ -59,8 +59,14 @@ def polish(calib, floor_pairs, band_seg=None, post_px=()):
     out = least_squares(
         _residuals, x0, args=(w, h, floor_pairs, band_seg, post_px),
         loss="soft_l1", f_scale=4.0, max_nfev=800,
-        bounds=([0.4 * w, -np.pi, -np.pi, -np.pi, -60, -60, -60, 2.20, 4.55, 0.62, 0.62],
-                [2.0 * w, np.pi, np.pi, np.pi, 60, 60, 60, 2.55, 5.60, 1.05, 1.05]),
+        # dims near-regulation: +-7% absorbs noise without letting a wrong line
+        # assignment warp the court to fit (courts ARE regulation; fix the
+        # assignment, not the court)
+        # court dims LOCKED to regulation (18x9 is certain; freeing them lets a
+        # wrong line assignment warp the court to fit at near-zero error).
+        # net_h floor 2.0: rec nets are often strung below standard height.
+        bounds=([0.4 * w, -np.pi, -np.pi, -np.pi, -60, -60, -60, 2.00, 4.55, 0.999, 0.999],
+                [2.0 * w, np.pi, np.pi, np.pi, 60, 60, 60, 2.55, 5.60, 1.001, 1.001]),
     )
     f, rx, ry, rz, tx, ty, tz, net_h, post_hw, sx, sz = out.x
     r = _residuals(out.x, w, h, floor_pairs, band_seg, post_px)

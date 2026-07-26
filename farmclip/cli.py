@@ -43,7 +43,15 @@ def calibrate(clip: Path, out: Path):
                 and abs(s[2] - s[0]) > w * 0.45]
         if not band:
             continue
-        net_band = max(band, key=lambda s: abs(s[2] - s[0]))
+        # the net has TWO long parallel bands; net top = the one with a partner
+        # 20-80px BELOW it (else the longest wins the tie)
+        def ymid(s):
+            return (s[1] + s[3]) / 2
+
+        paired = [s for s in band
+                  if any(20 < ymid(o) - ymid(s) < 80 for o in band if o is not s)]
+        pool = paired or band
+        net_band = min(pool, key=ymid) if paired else max(band, key=lambda s: abs(s[2] - s[0]))
         calib = None
         if low:
             attack_near = max(low, key=lambda s: abs(s[2] - s[0]))
