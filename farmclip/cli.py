@@ -126,13 +126,15 @@ def run_ball(clip: Path, out: Path, calib: dict, fps: float):
     return ball3d
 
 
-def run_players(clip: Path, calib: dict):
-    """YOLO persons -> tracks -> ground positions. Returns {frame: [players]}."""
+def run_players(clip: Path, calib: dict, model_name="yolo11s.pt", imgsz=1280,
+                conf=0.2, per_side=6, step=1, coast_s=1.5, fps=30.0):
+    """YOLO persons -> tracks -> ground positions. Returns {frame: [players]}.
+    step>1 subsamples frames (capsules don't need 60Hz); coast_s bridges misses."""
     from ultralytics import YOLO
     from .players import Tracker, to_scene_players
 
-    model = YOLO("yolo11n.pt")
-    tracker = Tracker()
+    model = YOLO(model_name)
+    tracker = Tracker(max_miss=int(coast_s * fps / step))
     cap = cv2.VideoCapture(str(clip))
     per_frame = {}
     i = 0
@@ -140,9 +142,13 @@ def run_players(clip: Path, calib: dict):
         ok, frame = cap.read()
         if not ok:
             break
-        r = model.predict(frame, classes=[0], conf=0.25, imgsz=960, verbose=False)[0]
+        if i % step:
+            i += 1
+            continue
+        r = model.predict(frame, classes=[0], conf=conf, imgsz=imgsz, verbose=False)[0]
         tracked = tracker.update([b.xyxy[0].tolist() for b in r.boxes])
-        players = to_scene_players(tracked, calib)
+        hits = {tid: t.get("hits", 0) for tid, t in tracker.tracks.items()}
+        players = to_scene_players(tracked, calib, per_side=per_side, hits=hits)
         if players:
             per_frame[i] = players
         i += 1
@@ -159,6 +165,10 @@ def main(argv=None):
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--end", type=float, default=60.0)
     ap.add_argument("--out", default="out")
+    ap.add_argument("--player-model", default="yolo11s.pt")
+    ap.add_argument("--player-imgsz", type=int, default=1280)
+    ap.add_argument("--per-side", type=int, default=6)
+    ap.add_argument("--player-step", type=int, default=1)
     args = ap.parse_args(argv)
 
     out = Path(args.out)
@@ -175,7 +185,9 @@ def main(argv=None):
     calib = json.loads(calib_path.read_text()) if calib_path.exists() else calibrate(clip, out)
 
     ball3d = run_ball(clip, out, calib, fps)
-    players = run_players(clip, calib)
+    players = run_players(clip, calib, model_name=args.player_model,
+                          imgsz=args.player_imgsz, per_side=args.per_side,
+                          step=args.player_step, fps=fps)
 
     frames = []
     for i in sorted(set(ball3d) | set(players)):

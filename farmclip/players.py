@@ -76,8 +76,10 @@ class Tracker:
         return list(assigned.items())
 
 
-def to_scene_players(tracked, calib, margin=1.0):
-    """tracked: [(tid, box), ...] -> scene players list; on-court only."""
+def to_scene_players(tracked, calib, margin=1.0, per_side=6, hits=None):
+    """tracked: [(tid, box), ...] -> scene players list; on-court only.
+    per_side caps each team at roster size (6 for 6v6, 2 for 2v2): coasting
+    ghosts and refs can't inflate counts past what volleyball allows."""
     from .court import COURT_L, COURT_W
     hl = calib.get("court_l", COURT_L) / 2
     hw = calib.get("court_w", COURT_W) / 2
@@ -96,8 +98,12 @@ def to_scene_players(tracked, calib, margin=1.0):
         out.append({"id": f"{team}{tid}", "team": team, "pos": [round(x, 3), round(z, 3)]})
     # dedupe: two tracks within 0.4m are the same person double-boxed
     dedup = []
-    for p in out:
+    for p in sorted(out, key=lambda p: -(hits or {}).get(int(p["id"][1:]), 0)):
         if all((p["pos"][0] - q["pos"][0]) ** 2 + (p["pos"][1] - q["pos"][1]) ** 2 > 0.16
                for q in dedup):
             dedup.append(p)
-    return dedup
+    # roster cap per side, established tracks first
+    capped = []
+    for team in ("a", "b"):
+        capped += [p for p in dedup if p["team"] == team][:per_side]
+    return capped

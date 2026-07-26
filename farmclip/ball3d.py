@@ -107,25 +107,32 @@ def fit_segment(seg, calib, fps, rms_ok=15.0):
     # speeds, so the optimizer finds the best PHYSICAL trajectory rather than
     # escaping to infinity and getting rejected afterwards
     x0 = np.array([0.0, 3.0, 0.0, 0.0, 0.0, 0.0])
+    # robust loss: single-frame detector glitches (2nd union model firing on
+    # another object) must not poison an otherwise-clean arc
     out = least_squares(residuals, x0, method="trf", max_nfev=2000,
+                        loss="soft_l1", f_scale=6.0,
                         bounds=([-12, 0.0, -8, -45, -45, -45],
                                 [12, 10.0, 8, 45, 45, 45]))
     pts = model(out.x)
-    rms = float(np.sqrt(np.mean(np.sum((_project(calib, pts) - uv) ** 2, axis=1))))
+    d = np.linalg.norm(_project(calib, pts) - uv, axis=1)
+    inliers = d < 20
+    if inliers.mean() < 0.7:
+        return None
+    rms = float(np.sqrt(np.mean(d[inliers] ** 2)))
     if rms > rms_ok or pts[:, 1].max() > 12 \
             or np.abs(pts[:, 0]).max() > 15 or np.abs(pts[:, 2]).max() > 10:
         return None
     return seg[:, 0].astype(int), pts, rms, out.x
 
 
-def lift(track, calib, fps):
+def lift(track, calib, fps, min_len=5, rms_ok=14.0):
     """Full pipeline: 2D track -> {frame: [x,y,z]}.
 
     Emits EVERY frame across a fitted segment's span (dense), not just
     detected ones — the ballistic model interpolates interior gaps."""
     fits = []
     for run in runs(track):
-        fits.extend(grow_segments(run, calib, fps))
+        fits.extend(grow_segments(run, calib, fps, min_len=min_len, rms_ok=rms_ok))
     n_seg = len(fits)
 
     # continuity filter: the ball's POSITION is continuous through touches.
@@ -179,4 +186,17 @@ def lift(track, calib, fps):
             for k in range(1, gap):
                 u = k / gap
                 out[a + k] = (pa * (1 - u) + pb * u).tolist()
+    # teleport smoother: adjacent-segment junctions can still jump within one
+    # frame; crossfade a +-3-frame window over any superphysical step
+    frames_sorted = sorted(out)
+    for a, b in zip(frames_sorted, frames_sorted[1:]):
+        if b - a != 1:
+            continue
+        if np.linalg.norm(np.array(out[b]) - np.array(out[a])) * fps > 45:
+            lo = next((f for f in range(a - 3, a + 1) if f in out), a)
+            hi = next((f for f in range(b + 3, b - 1, -1) if f in out), b)
+            pl, ph = np.array(out[lo]), np.array(out[hi])
+            for fr in range(lo, hi + 1):
+                u = (fr - lo) / max(hi - lo, 1)
+                out[fr] = (pl * (1 - u) + ph * u).tolist()
     return out, n_seg, n_ok
