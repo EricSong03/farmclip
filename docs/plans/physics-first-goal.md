@@ -12,6 +12,12 @@ Loop until ALL of these hold, then stop:
    "trajectories", no flat cross-gym lines), verified by inspecting renders.
 
 Progress log (newest first):
+- iter 4: never-vanish fill implemented (touch extrapolation + BVP middle
+  + speed/wall/stray gates). menlo arcs 2.4/9.9px ✓✓ 96% cov ✓;
+  mikasa arcs 2.8/13.6px (p90 1.6 over), 92% cov ✓, fill median 7.8px.
+  menlo fill-region errors (61px median on 22 anchors) traced to
+  unfittable held-ball regions — next: verify visually whether those
+  anchors are junk, tune mikasa p90, then drag + streak/size stages.
 - iter 3 (menlo): tight touch-bridging (0.25s/2.5m — the flat cross-gym
   lines were 24m linear bridges, not fits), physics-driven merge pass,
   greedy rescue of over-cut fragments, fragment absorption into arcs.
