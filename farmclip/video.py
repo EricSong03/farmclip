@@ -6,7 +6,7 @@ import cv2
 
 
 def clip_video(src: str | Path, dst: str | Path, start_s: float, end_s: float) -> Path:
-    """Copy [start_s, end_s) of src to dst (mp4v). Returns dst."""
+    """Copy [start_s, end_s) of src to dst (H.264 — browsers can't decode mp4v). Returns dst."""
     src, dst = Path(src), Path(dst)
     cap = cv2.VideoCapture(str(src))
     if not cap.isOpened():
@@ -15,7 +15,9 @@ def clip_video(src: str | Path, dst: str | Path, start_s: float, end_s: float) -
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     dst.parent.mkdir(parents=True, exist_ok=True)
-    out = cv2.VideoWriter(str(dst), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    out = cv2.VideoWriter(str(dst), cv2.VideoWriter_fourcc(*"avc1"), fps, (w, h))
+    if not out.isOpened():  # no H.264 encoder on this box; mp4v plays in cv2 but not browsers
+        out = cv2.VideoWriter(str(dst), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
     cap.set(cv2.CAP_PROP_POS_MSEC, start_s * 1000)
     n_frames = int((end_s - start_s) * fps)
     for _ in range(n_frames):
