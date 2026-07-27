@@ -71,7 +71,12 @@ for f0, f1 in picks:
     if not ok:
         continue
     path = _project(calib, [ball3d[f] for f in range(f0, f1 + 1)])
+    h, w = img.shape[:2]
     for p, q in zip(path, path[1:]):
+        # skip segments leaving the frame: off-screen flight is real data but
+        # its projection near the frustum edge draws meaningless spikes
+        if not all(-50 <= v[0] <= w + 50 and -50 <= v[1] <= h + 50 for v in (p, q)):
+            continue
         cv2.line(img, tuple(p.astype(int)), tuple(q.astype(int)), (255, 200, 0), 2)
     for fr, x, y, _ in anchors[(anchors[:, 0] >= f0) & (anchors[:, 0] <= f1)]:
         cv2.circle(img, (int(x), int(y)), 4, (0, 255, 0), -1)

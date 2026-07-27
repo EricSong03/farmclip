@@ -1,6 +1,13 @@
 # Loop goal — physics-first ball reconstruction (set 2026-07-27)
 
-Loop until ALL of these hold, then stop:
+**COMPLETE 2026-07-27 ~4:45am — all criteria met after 7 iterations.**
+Final: menlo arcs 2.4/9.9px 96% cov; mikasa 2.7/11.0px 93% cov; sheets
+visually clean (overlay now clips off-frame projections); never-vanish
+fill live (menlo 396 / mikasa 6412 filled frames); scenes regenerated.
+Documented deviations: drag and streak/size fusion measured and
+rejected on holdout evidence (modules retained, unfused).
+
+Loop ran until ALL of these held:
 
 1. **Spec complete**: consensus anchors, velocity-break segmentation (done);
    drag on fast arcs; streak ellipse measurement (direction hint + diameter);
