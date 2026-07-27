@@ -52,6 +52,43 @@ if fill_e:
           f"p90 {np.percentile(fill_e, 90):.1f}px ({len(fill_e)} anchors)")
 print(f"HOLDOUT coverage: {n_cov / max(len(held), 1) * 100:.0f}% of {len(held)}")
 
+# --- 3D depth plausibility (docs/plans/depth-accuracy-goal.md) ---
+# net-crossing error: when the projected path passes the net's image
+# midline, the 3D path should be at the net plane (x ~ 0)
+net_z = np.linspace(-4.5, 4.5, 50)
+net_mid = _project(calib, [[0.0, 1.7, z] for z in net_z])
+order = np.argsort(net_mid[:, 0])
+nx, ny = net_mid[order, 0], net_mid[order, 1]
+
+frames_fit = sorted(ball3d)
+spans = []
+s = frames_fit[0]
+for a, b in zip(frames_fit, frames_fit[1:]):
+    if b - a > 1:
+        spans.append((s, a)); s = b
+spans.append((s, frames_fit[-1]))
+
+cross_err, landings, land_in = [], 0, 0
+for f0, f1 in spans:
+    pts3 = np.array([ball3d[f] for f in range(f0, f1 + 1)])
+    uv = _project(calib, pts3)
+    inb = (uv[:, 0] >= nx[0]) & (uv[:, 0] <= nx[-1])
+    rel = uv[:, 1] - np.interp(uv[:, 0], nx, ny)
+    for k in range(1, len(uv)):
+        if inb[k] and inb[k - 1] and rel[k] * rel[k - 1] < 0:
+            cross_err.append(abs(pts3[k][0]))
+    p_end = pts3[-1]
+    if p_end[1] <= 0.05:  # rally ended on the floor
+        landings += 1
+        land_in += bool(abs(p_end[0]) <= 10.0 and abs(p_end[2]) <= 5.5)
+if cross_err:
+    print(f"DEPTH net-crossings: {len(cross_err)}, median |x| "
+          f"{np.median(cross_err):.2f}m, p90 {np.percentile(cross_err, 90):.2f}m "
+          f"(goal <=0.5)")
+if landings:
+    print(f"DEPTH landings: {land_in}/{landings} in court+1m "
+          f"({land_in / landings * 100:.0f}%, goal >=80%)")
+
 # --- overlay contact sheet: mid-frame of up to 12 arcs, trail = fitted path ---
 frames_fit = sorted(ball3d)
 arcs = []
