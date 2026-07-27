@@ -28,4 +28,12 @@ Rejected already (do not retry without new evidence): ball-size depth
 (2-3x ellipse overshoot at 720p), drag (worse holdout, twice).
 
 Progress log (newest first):
+- iter 2-4: rally-chain joint fit + net-plane anchors (in-chain, in fills,
+  in rally-end extensions) + floor-bounce ray anchors + sweep-aware
+  metric. Real crossings: menlo 2.4m -> 0.06m (arc) / 0.54m (fill);
+  mikasa 5.5m -> 0.41m (arc) / 0.86m (fill). Bound-parking 13.8% -> 8.5%.
+  Reprojection at goal on both. Remaining: fill-crossing tails, landings
+  (menlo 4/6, mikasa 76% vs 80%), p90 tails. Per-arc net residual
+  attempt (pre-chain) degraded pixels and was reverted — the chain
+  formulation is the one that works.
 - (pending) iter 1: baseline 3D metrics before any fitter change.
