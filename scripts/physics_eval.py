@@ -76,15 +76,17 @@ for f0, f1 in spans:
     rel = uv[:, 1] - np.interp(uv[:, 0], nx, ny)
     for k in range(1, len(uv)):
         if inb[k] and inb[k - 1] and rel[k] * rel[k - 1] < 0:
-            cross_err.append(abs(pts3[k][0]))
+            cross_err.append((abs(pts3[k][0]), (f0 + k) in filled))
     p_end = pts3[-1]
     if p_end[1] <= 0.05:  # rally ended on the floor
         landings += 1
         land_in += bool(abs(p_end[0]) <= 10.0 and abs(p_end[2]) <= 5.5)
-if cross_err:
-    print(f"DEPTH net-crossings: {len(cross_err)}, median |x| "
-          f"{np.median(cross_err):.2f}m, p90 {np.percentile(cross_err, 90):.2f}m "
-          f"(goal <=0.5)")
+for lab, sel in [("arc", [e for e, f in cross_err if not f]),
+                 ("fill", [e for e, f in cross_err if f])]:
+    if sel:
+        print(f"DEPTH net-crossings ({lab}): {len(sel)}, median |x| "
+              f"{np.median(sel):.2f}m, p90 {np.percentile(sel, 90):.2f}m "
+              f"(goal <=0.5)")
 if landings:
     print(f"DEPTH landings: {land_in}/{landings} in court+1m "
           f"({land_in / landings * 100:.0f}%, goal >=80%)")

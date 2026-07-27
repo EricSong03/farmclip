@@ -196,6 +196,98 @@ def fit_segment(seg, calib, fps, rms_ok=15.0, x0=None):
     return seg[:, 0].astype(int), pts, rms, out.x
 
 
+def _net_mid(calib):
+    """Image-space net midline (x_img -> y_img), cached on the calib dict."""
+    if "_netuv" not in calib:
+        m = _project(calib, [[0.0, 1.7, z] for z in np.linspace(-4.5, 4.5, 50)])
+        o = np.argsort(m[:, 0])
+        calib["_netuv"] = (m[o, 0], m[o, 1])
+    return calib["_netuv"]
+
+
+def refine_chains(pairs, calib, fps, max_gap_s=2.5):
+    """Jointly refit each rally chain (arcs linked by gaps <= max_gap_s) with
+    ball-position continuity across touches. Depth is under-determined per
+    arc; continuity lets well-constrained arcs pull their neighbors' depth
+    to the right place. Accepts a chain's joint solution only if summed
+    reprojection stays within tolerance (pixels are the arbiter).
+    Mutates and returns pairs."""
+    W_C = 20.0  # px-equivalent penalty per meter of touch discontinuity
+
+    def chain_ranges():
+        out, s = [], 0
+        for i in range(1, len(pairs)):
+            if pairs[i][0][0, 0] - pairs[i - 1][0][-1, 0] > fps * max_gap_s:
+                out.append((s, i)); s = i
+        out.append((s, len(pairs)))
+        return out
+
+    for lo, hi in chain_ranges():
+        n = hi - lo
+        if n < 2:
+            continue
+        segs = [pairs[i][0] for i in range(lo, hi)]
+        f0s = [s[0, 0] for s in segs]
+        uvs = [s[:, 1:3] for s in segs]
+        ts = [(s[:, 0] - s[0, 0]) / fps for s in segs]
+        mids = [(segs[k][-1, 0] + segs[k + 1][0, 0]) / 2 for k in range(n - 1)]
+
+        def pos(P, k, tt):
+            p0, v0 = P[6 * k:6 * k + 3], P[6 * k + 3:6 * k + 6]
+            tt = np.atleast_1d(tt)
+            return p0[None] + v0[None] * tt[:, None] + 0.5 * G[None] * tt[:, None] ** 2
+
+        P0 = np.concatenate([pairs[i][1][3] for i in range(lo, hi)])
+
+        # net-plane anchors: band-crossing times of the seeded chain's dense
+        # projected path. Inside the chain, pooled pixels + continuity make
+        # occasional sweep-misclassifications survivable (soft_l1 tail).
+        nx_, ny_ = _net_mid(calib)
+        W_N = 15.0
+        net_ev = []  # (arc index k, local time tc)
+        for k in range(n):
+            span = segs[k][-1, 0] - f0s[k]
+            td = np.arange(0, span + 1) / fps
+            duv = _project(calib, pos(P0, k, td))
+            dinb = (duv[:, 0] >= nx_[0]) & (duv[:, 0] <= nx_[-1])
+            drel = duv[:, 1] - np.interp(duv[:, 0], nx_, ny_)
+            for j in range(1, len(td)):
+                if dinb[j] and dinb[j - 1] and drel[j - 1] * drel[j] < 0:
+                    u = drel[j - 1] / (drel[j - 1] - drel[j])
+                    net_ev.append((k, td[j - 1] + u / fps))
+
+        def resid(P):
+            r = [(_project(calib, pos(P, k, ts[k])) - uvs[k]).ravel()
+                 for k in range(n)]
+            for k, fm in enumerate(mids):
+                a = pos(P, k, (fm - f0s[k]) / fps)[0]
+                b = pos(P, k + 1, (fm - f0s[k + 1]) / fps)[0]
+                r.append(W_C * (a - b))
+            r.append(np.array([W_N * (P[6 * k] + P[6 * k + 3] * tc)
+                               for k, tc in net_ev]))
+            return np.concatenate([x for x in r if len(x)])
+        bl = np.tile([-12, 0.0, -8, -45, -45, -45], n)
+        bu = np.tile([12, 10.0, 8, 45, 45, 45], n)
+        sol = least_squares(resid, np.clip(P0, bl, bu), method="trf",
+                            max_nfev=4000, loss="soft_l1", f_scale=6.0,
+                            bounds=(bl, bu))
+
+        def rms_of(P):
+            d = [np.minimum(np.linalg.norm(
+                _project(calib, pos(P, k, ts[k])) - uvs[k], axis=1), 20)
+                for k in range(n)]
+            return np.sqrt(np.mean(np.concatenate(d) ** 2))
+
+        if rms_of(sol.x) <= rms_of(np.clip(P0, bl, bu)) * 1.05 + 0.5:
+            for k in range(n):
+                i = lo + k
+                frames, _, rms, _ = pairs[i][1]
+                params = sol.x[6 * k:6 * k + 6]
+                pts = pos(sol.x, k, ts[k])
+                pairs[i] = (pairs[i][0], (frames, pts, rms, params))
+    return pairs
+
+
 def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
     """Full pipeline: 2D track -> {frame: [x,y,z]}.
 
@@ -261,7 +353,8 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
                 pairs[i:i + 2] = [(both, trial)]   # stay: try growing further
             else:
                 i += 1
-        fits = [f for _, f in pairs if f is not None]
+        pairs = refine_chains([p for p in pairs if p[1] is not None], calib, fps)
+        fits = [f for _, f in pairs]
     else:
         for run in runs(track):
             fits.extend(grow_segments(run, calib, fps, min_len=min_len, rms_ok=rms_ok))
@@ -369,6 +462,20 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
                             pts[j] = pa + vb * t + 0.5 * G * t * t
                     joined = True
             if joined:
+                # fills own most real net crossings (spike blur = detection
+                # gap): if the fill's projection crosses the net band, bend
+                # it to cross the plane there, keeping the endpoints fixed
+                nx_, ny_ = _net_mid(calib)
+                fuv = _project(calib, pts)
+                finb = (fuv[:, 0] >= nx_[0]) & (fuv[:, 0] <= nx_[-1])
+                frel = fuv[:, 1] - np.interp(fuv[:, 0], nx_, ny_)
+                for j in range(1, len(pts)):
+                    if finb[j] and finb[j - 1] and frel[j - 1] * frel[j] < 0:
+                        bump = np.concatenate([
+                            np.linspace(0, 1, j + 1),
+                            np.linspace(1, 0, len(pts) - j)[1:]])
+                        pts[:, 0] -= pts[j, 0] * bump
+                        break
                 pts = np.clip(pts, [-12, 0, -9], [12, 10, 9])
                 for f, p in zip(frs, pts):
                     out[int(f)] = list(p)
@@ -377,16 +484,36 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
             # rally ends here: continue the last flight to the floor (≤1s),
             # stopping at the gym walls — a ball that exits the volume exits
             # the scene, it doesn't dive through the corner of the frame
+            ext_f, ext_p = [], []
             for f in range(a_end + 1, a_end + int(fps) + 1):
                 if f in out:
                     break
                 p = ext(fit, f)
                 if abs(p[0]) > 12 or abs(p[2]) > 9:
                     break
-                out[f] = [p[0], max(p[1], 0.0), p[2]]
-                filled.add(f)
+                ext_f.append(f)
+                ext_p.append(p)
                 if p[1] <= 0:
                     break
+            if ext_p:
+                pts = np.array(ext_p)
+                # point-winning shots cross the net inside this extension:
+                # bend x so the crossing sits on the plane (start stays
+                # continuous with the arc; landing shifts by the correction)
+                nx_, ny_ = _net_mid(calib)
+                euv = _project(calib, pts)
+                einb = (euv[:, 0] >= nx_[0]) & (euv[:, 0] <= nx_[-1])
+                erel = euv[:, 1] - np.interp(euv[:, 0], nx_, ny_)
+                for j in range(1, len(pts)):
+                    if einb[j] and einb[j - 1] and erel[j - 1] * erel[j] < 0:
+                        ramp = np.concatenate([
+                            np.linspace(0, 1, j + 1),
+                            np.ones(len(pts) - j - 1)])
+                        pts[:, 0] -= pts[j, 0] * ramp
+                        break
+                for f, p in zip(ext_f, pts):
+                    out[f] = [p[0], max(p[1], 0.0), p[2]]
+                    filled.add(f)
     # teleport smoother: adjacent-segment junctions can still jump within one
     # frame; crossfade a +-3-frame window over any superphysical step
     frames_sorted = sorted(out)
