@@ -8,7 +8,7 @@ Turn stationary(ish) volleyball gameplay video into a 3D model of the game. Curr
   - Left: video upload (local object URL, nothing leaves the machine) + canvas overlay for clicking calibration points.
   - Right: three.js render of a regulation FIVB court (18×9 m, attack lines at 3 m, net at 2.43 m) with orbit controls.
   - "Calibrate" is a stub — logs clicked points to console.
-- `label.html` — standalone ball-label checker: load a clip + `out/finetune/ball/*.csv` (plus optional ball0/ball1 csvs for the class filter), step frames, click to correct, `x` to reject, download corrected csv.
+- `label.html` — ball-label checker (Chrome/Edge): pick the repo folder once, it auto-loads clips + label csvs (runs hardcoded in `RUNS`), serves random suspect frames balanced across clips, click to correct / `x` to reject, auto-saves to `out/finetune/ball/<name>.labeled.csv` (resumes from it).
 - `examples/` — reference screenshots/clips of real PoVs we're targeting.
 
 ## Chosen approach (see docs/specs/ and docs/plans/roadmap.md "Decisions")
