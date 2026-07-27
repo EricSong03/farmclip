@@ -61,6 +61,58 @@ def runs(track, max_gap=3):
     yield vis[cur]
 
 
+def consensus(a, b, agree_px=12.0):
+    """Merge two model tracks keeping only frames where both agree.
+    a, b: (N,4) [frame,x,y,vis]. Physics-first: these are the ONLY anchors;
+    everything else is reconstructed, never guessed."""
+    n = min(len(a), len(b))
+    a, b = a[:n], b[:n]
+    t = a.copy()
+    both = (a[:, 3] > 0) & (b[:, 3] > 0)
+    close = np.linalg.norm(a[:, 1:3] - b[:, 1:3], axis=1) <= agree_px
+    keep = both & close
+    t[:, 1:3] = (a[:, 1:3] + b[:, 1:3]) / 2
+    t[:, 3] = keep.astype(float)
+    t[~keep, 1:3] = 0
+    return t
+
+
+def velocity_segments(run, calib, fps, soft=2.5, hard=7.0, min_anchors=4):
+    """Split an anchor run at velocity breaks (= contacts). Yields
+    (anchors, soft_entry) — soft_entry True when the cut before this segment
+    was a slight touch, so the fit may seed from the previous arc's exit.
+
+    Threshold logic: between anchors the only allowed acceleration is
+    gravity (+drag, absorbed in the soft factor). Residual acceleration
+    beyond `soft`x gravity ends the arc; beyond `hard`x it's a real hit.
+    ponytail: gravity in px assumes ~8m depth; refit per-arc later if it
+    proves too coarse."""
+    fr, p = run[:, 0], run[:, 1:3]
+    if len(run) < 2 * min_anchors:
+        if len(run) >= min_anchors:
+            yield run, False
+        return
+    dt = np.diff(fr) / fps
+    v = np.diff(p, axis=0) / dt[:, None]                # px/s between anchors
+    g_px = calib["f"] * 9.81 / 8.0                      # px/s^2 at mid-court
+    cut_at, cut_hard = [], []
+    for i in range(1, len(v)):
+        dtm = (dt[i - 1] + dt[i]) / 2
+        resid = np.linalg.norm(v[i] - v[i - 1] - [0, g_px * dtm]) / dtm
+        if resid > soft * g_px:
+            cut_at.append(i)                            # cut before anchor i+? -> at point i
+            cut_hard.append(resid > hard * g_px)
+    lo, soft_entry = 0, False
+    for c, is_hard in zip(cut_at, cut_hard):
+        if c + 1 - lo >= min_anchors:
+            yield run[lo:c + 1], soft_entry
+            lo, soft_entry = c + 1, not is_hard
+        elif is_hard:
+            lo, soft_entry = c + 1, False               # too short to fit; drop it
+    if len(run) - lo >= min_anchors:
+        yield run[lo:], soft_entry
+
+
 def grow_segments(run, calib, fps, min_len=6, rms_ok=12.0):
     """Greedy fit-quality segmentation: extend the window while a ballistic fit
     explains it; where the fit breaks is a touch. Yields fitted segments."""
@@ -91,8 +143,9 @@ def _project(calib, pts3d):
     return proj.reshape(-1, 2)
 
 
-def fit_segment(seg, calib, fps, rms_ok=15.0):
-    """seg: (M,4) visible samples. Returns (frames, pts3d, rms_px, params) or None."""
+def fit_segment(seg, calib, fps, rms_ok=15.0, x0=None):
+    """seg: (M,4) visible samples. Returns (frames, pts3d, rms_px, params) or None.
+    x0 optionally seeds the optimizer (soft-break continuity from prior arc)."""
     t = (seg[:, 0] - seg[0, 0]) / fps
     uv = seg[:, 1:3]
 
@@ -106,7 +159,9 @@ def fit_segment(seg, calib, fps, rms_ok=15.0):
     # bounded fit: constrain p0 to the gym volume and v0 to humanly-possible
     # speeds, so the optimizer finds the best PHYSICAL trajectory rather than
     # escaping to infinity and getting rejected afterwards
-    x0 = np.array([0.0, 3.0, 0.0, 0.0, 0.0, 0.0])
+    if x0 is None:
+        x0 = np.array([0.0, 3.0, 0.0, 0.0, 0.0, 0.0])
+    x0 = np.clip(x0, [-12, 0.0, -8, -45, -45, -45], [12, 10.0, 8, 45, 45, 45])
     # robust loss: single-frame detector glitches (2nd union model firing on
     # another object) must not poison an otherwise-clean arc
     out = least_squares(residuals, x0, method="trf", max_nfev=2000,
@@ -125,14 +180,34 @@ def fit_segment(seg, calib, fps, rms_ok=15.0):
     return seg[:, 0].astype(int), pts, rms, out.x
 
 
-def lift(track, calib, fps, min_len=5, rms_ok=14.0):
+def lift(track, calib, fps, min_len=5, rms_ok=14.0, segmenter="greedy"):
     """Full pipeline: 2D track -> {frame: [x,y,z]}.
 
     Emits EVERY frame across a fitted segment's span (dense), not just
-    detected ones — the ballistic model interpolates interior gaps."""
+    detected ones — the ballistic model interpolates interior gaps.
+    segmenter: "greedy" (fit-residual growing, legacy) or "velocity"
+    (physics-first: cut at velocity breaks, seed across soft touches)."""
     fits = []
-    for run in runs(track):
-        fits.extend(grow_segments(run, calib, fps, min_len=min_len, rms_ok=rms_ok))
+    if segmenter == "velocity":
+        # consensus anchors are sparse but trusted: let arcs span long
+        # detection gaps — the velocity-break test still guards contacts
+        for run in runs(track, max_gap=int(fps * 0.5)):
+            prev = None
+            for seg, soft_entry in velocity_segments(run, calib, fps,
+                                                     min_anchors=min_len - 1):
+                x0 = None
+                if soft_entry and prev is not None:
+                    p0, v0 = prev[3][:3], prev[3][3:]
+                    te = (seg[0, 0] - prev[0][0]) / fps
+                    x0 = np.concatenate([p0 + v0 * te + 0.5 * G * te * te,
+                                         v0 + G * te])
+                fit = fit_segment(seg, calib, fps, rms_ok, x0=x0)
+                if fit is not None:
+                    fits.append(fit)
+                prev = fit
+    else:
+        for run in runs(track):
+            fits.extend(grow_segments(run, calib, fps, min_len=min_len, rms_ok=rms_ok))
     n_seg = len(fits)
 
     # continuity filter: the ball's POSITION is continuous through touches.

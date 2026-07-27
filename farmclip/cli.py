@@ -95,7 +95,7 @@ def calibrate(clip: Path, out: Path):
 def run_ball(clip: Path, out: Path, calib: dict, fps: float):
     """Dual VballNet union 2D -> ballistic 3D. Returns {frame: [x,y,z]}."""
     import pandas as pd
-    from .ball3d import lift, fill_gaps
+    from .ball3d import lift
 
     dfs = []
     for i, model in enumerate(VBALLNET_MODELS):
@@ -110,18 +110,14 @@ def run_ball(clip: Path, out: Path, calib: dict, fps: float):
                 cwd=VBALLNET, check=True)
             csvs = list(mdir.glob("*/ball.csv"))
         dfs.append(pd.read_csv(csvs[0]))
-    # union: primary model's position wins; secondary fills its misses
-    df = dfs[0]
-    for other in dfs[1:]:
-        n = min(len(df), len(other))
-        take = (df.Visibility[:n] == 0) & (other.Visibility[:n] > 0)
-        df.loc[take[take].index, ["X", "Y", "Visibility"]] = \
-            other.loc[take[take].index, ["X", "Y", "Visibility"]].values
-    from .ball3d import reject_outliers
-    track = df[["Frame", "X", "Y", "Visibility"]].to_numpy(float)
-    track = fill_gaps(reject_outliers(track), max_gap=max(3, int(fps * 0.1)))
-    ball3d, n_seg, n_ok = lift(track, calib, fps)
-    print(f"ball: {int((df.Visibility > 0).mean() * 100)}% detected, "
+    # physics-first (docs/specs/ball-physics-first.md): consensus anchors
+    # only, velocity-break segmentation, no detection-side interpolation
+    from .ball3d import consensus, reject_outliers
+    cols = ["Frame", "X", "Y", "Visibility"]
+    track = consensus(dfs[0][cols].to_numpy(float), dfs[1][cols].to_numpy(float))
+    track = reject_outliers(track)
+    ball3d, n_seg, n_ok = lift(track, calib, fps, segmenter="velocity")
+    print(f"ball: {int((track[:, 3] > 0).mean() * 100)}% consensus anchors, "
           f"{n_ok}/{n_seg} segments fitted, {len(ball3d)} 3D frames")
     return ball3d
 
