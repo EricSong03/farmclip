@@ -77,6 +77,22 @@ def consensus(a, b, agree_px=12.0):
     return t
 
 
+def reject_static(track, fps, win_s=0.5, min_px=6.0):
+    """Kill anchors that barely move across a ~win_s window. A ball in free
+    flight ALWAYS moves (even at apex gravity drops it >10px in 0.25s);
+    consensus false positives on scoreboards/banners/logos don't."""
+    t = track.copy()
+    vis_idx = np.where(t[:, 3] > 0)[0]
+    win_f = win_s * fps
+    for i in vis_idx:
+        nb = vis_idx[(np.abs(t[vis_idx, 0] - t[i, 0]) <= win_f)]
+        far = t[nb, 0].max() - t[nb, 0].min() >= win_f * 0.6
+        if len(nb) >= 3 and far and \
+                np.linalg.norm(t[nb, 1:3] - t[i, 1:3], axis=1).max() < min_px:
+            t[i, 3] = 0
+    return t
+
+
 def velocity_segments(run, calib, fps, soft=2.5, hard=7.0, min_anchors=4):
     """Split an anchor run at velocity breaks (= contacts). Yields
     (anchors, soft_entry) — soft_entry True when the cut before this segment
@@ -191,6 +207,8 @@ def lift(track, calib, fps, min_len=5, rms_ok=14.0, segmenter="greedy"):
     if segmenter == "velocity":
         # consensus anchors are sparse but trusted: let arcs span long
         # detection gaps — the velocity-break test still guards contacts
+        track = reject_static(track, fps)
+        pairs = []  # (seg, fit) so merges can refit on raw anchors
         for run in runs(track, max_gap=int(fps * 0.5)):
             prev = None
             for seg, soft_entry in velocity_segments(run, calib, fps,
@@ -203,8 +221,49 @@ def lift(track, calib, fps, min_len=5, rms_ok=14.0, segmenter="greedy"):
                                          v0 + G * te])
                 fit = fit_segment(seg, calib, fps, rms_ok, x0=x0)
                 if fit is not None:
-                    fits.append(fit)
+                    pairs.append((seg, fit))
                 prev = fit
+        # rescue pass: velocity breaks over-cut on noise, leaving dense anchor
+        # clusters as sub-min fragments that never got fit. Sweep uncovered
+        # anchors with the greedy fit-grower — physics still gates acceptance.
+        used = set()
+        for sa, _ in pairs:
+            used.update(sa[:, 0].astype(int))
+        t2 = track.copy()
+        t2[np.isin(t2[:, 0].astype(int), list(used)), 3] = 0
+        for run in runs(t2, max_gap=int(fps * 0.5)):
+            for fit in grow_segments(run, calib, fps, min_len=min_len,
+                                     rms_ok=rms_ok):
+                seg = run[np.isin(run[:, 0], fit[0])]
+                pairs.append((seg, fit))
+        # leftover anchors too few to fit alone ride along as fit-less
+        # fragments; the merge pass below can absorb them into real arcs
+        used = {int(f) for sa, _ in pairs for f in sa[:, 0]}
+        t3 = track.copy()
+        t3[np.isin(t3[:, 0].astype(int), list(used)), 3] = 0
+        for run in runs(t3, max_gap=int(fps * 0.5)):
+            pairs.append((run, None))
+        pairs.sort(key=lambda sf: sf[0][0, 0])
+        # merge pass: velocity breaks over-cut on anchor noise. If ONE
+        # ballistic fit explains two adjacent arcs' anchors, they were the
+        # same flight — physics decides, not the threshold.
+        merged = True
+        while merged:
+            merged = False
+            for i in range(len(pairs) - 1):
+                (sa, fa), (sb, fb) = pairs[i], pairs[i + 1]
+                if fa is None and fb is None:
+                    continue
+                if sb[0, 0] - sa[-1, 0] > fps * 0.5:
+                    continue
+                both = np.vstack([sa, sb])
+                trial = fit_segment(both, calib, fps, rms_ok,
+                                    x0=(fa or fb)[3])
+                if trial is not None:
+                    pairs[i:i + 2] = [(both, trial)]
+                    merged = True
+                    break
+        fits = [f for _, f in pairs if f is not None]
     else:
         for run in runs(track):
             fits.extend(grow_segments(run, calib, fps, min_len=min_len, rms_ok=rms_ok))
@@ -250,13 +309,15 @@ def lift(track, calib, fps, min_len=5, rms_ok=14.0, segmenter="greedy"):
             t = (fr - f0) / fps
             out[fr] = (p0 + v0 * t + 0.5 * G * t * t).tolist()
     # bridge short inter-segment gaps (the touch moment): linear between the
-    # adjacent flight endpoints — the ball is at/near the touching player
+    # adjacent flight endpoints — the ball is at/near the touching player.
+    # A touch is split-second and local: long/far bridges drew straight
+    # cross-gym "trajectories", so both limits are tight now.
     frames_sorted = sorted(out)
     for a, b in zip(frames_sorted, frames_sorted[1:]):
         gap = b - a
-        if 1 < gap <= int(fps * 0.7):
+        if 1 < gap <= int(fps * 0.25):
             pa, pb = np.array(out[a]), np.array(out[b])
-            if np.linalg.norm(pb - pa) > 1.0 + 35 * gap / fps:
+            if np.linalg.norm(pb - pa) > 2.5:
                 continue  # endpoints too far apart: not the same touch, don't teleport
             for k in range(1, gap):
                 u = k / gap
