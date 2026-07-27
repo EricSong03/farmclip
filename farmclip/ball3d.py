@@ -205,6 +205,20 @@ def _net_mid(calib):
     return calib["_netuv"]
 
 
+def _ray_floor(calib, u, v):
+    """Backproject pixel (u,v) and intersect with the floor plane y=0."""
+    K = np.array([[calib["f"], 0, calib["img_w"] / 2],
+                  [0, calib["f"], calib["img_h"] / 2], [0, 0, 1]])
+    R, _ = cv2.Rodrigues(np.array(calib["rvec"], float))
+    tvec = np.array(calib["tvec"], float).ravel()
+    C = -R.T @ tvec
+    d = R.T @ np.linalg.solve(K, np.array([u, v, 1.0]))
+    if abs(d[1]) < 1e-9:
+        return None
+    s = -C[1] / d[1]
+    return C + s * d if s > 0 else None
+
+
 def refine_chains(pairs, calib, fps, max_gap_s=2.5):
     """Jointly refit each rally chain (arcs linked by gaps <= max_gap_s) with
     ball-position continuity across touches. Depth is under-determined per
@@ -256,6 +270,22 @@ def refine_chains(pairs, calib, fps, max_gap_s=2.5):
                     u = drel[j - 1] / (drel[j - 1] - drel[j])
                     net_ev.append((k, td[j - 1] + u / fps))
 
+        # floor-bounce anchors: junction with a down->up reversal in image y
+        # and a short gap = the ball hit the floor there; pixel ray ∩ floor
+        # plane is an EXACT 3D point — the strongest depth anchor we have
+        W_B = 20.0
+        bounce_ev = []  # (junction index k, 3d point)
+        for k in range(n - 1):
+            gap_s = (segs[k + 1][0, 0] - segs[k][-1, 0]) / fps
+            va = segs[k][-1, 2] - segs[k][-2, 2]        # image y velocity out
+            vb = segs[k + 1][1, 2] - segs[k + 1][0, 2]  # image y velocity in
+            if gap_s <= 0.6 and va > 0 and vb < 0:
+                u = (segs[k][-1, 1] + segs[k + 1][0, 1]) / 2
+                v = (segs[k][-1, 2] + segs[k + 1][0, 2]) / 2
+                q = _ray_floor(calib, u, v)
+                if q is not None and abs(q[0]) < 12 and abs(q[2]) < 9:
+                    bounce_ev.append((k, q))
+
         def resid(P):
             r = [(_project(calib, pos(P, k, ts[k])) - uvs[k]).ravel()
                  for k in range(n)]
@@ -265,6 +295,10 @@ def refine_chains(pairs, calib, fps, max_gap_s=2.5):
                 r.append(W_C * (a - b))
             r.append(np.array([W_N * (P[6 * k] + P[6 * k + 3] * tc)
                                for k, tc in net_ev]))
+            for k, q in bounce_ev:
+                fm = mids[k]
+                a = pos(P, k, (fm - f0s[k]) / fps)[0]
+                r.append(W_B * (a - q))
             return np.concatenate([x for x in r if len(x)])
         bl = np.tile([-12, 0.0, -8, -45, -45, -45], n)
         bu = np.tile([12, 10.0, 8, 45, 45, 45], n)

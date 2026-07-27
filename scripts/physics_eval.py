@@ -68,7 +68,7 @@ for a, b in zip(frames_fit, frames_fit[1:]):
         spans.append((s, a)); s = b
 spans.append((s, frames_fit[-1]))
 
-cross_err, landings, land_in = [], 0, 0
+cross_err, sweeps, landings, land_in = [], [], 0, 0
 for f0, f1 in spans:
     pts3 = np.array([ball3d[f] for f in range(f0, f1 + 1)])
     uv = _project(calib, pts3)
@@ -76,7 +76,15 @@ for f0, f1 in spans:
     rel = uv[:, 1] - np.interp(uv[:, 0], nx, ny)
     for k in range(1, len(uv)):
         if inb[k] and inb[k - 1] and rel[k] * rel[k - 1] < 0:
-            cross_err.append((abs(pts3[k][0]), (f0 + k) in filled))
+            # sweep vs cross: only score events where the fitted path also
+            # changes sides near the band pass — a near-net ball sweeping
+            # the band in 2D without crossing SHOULD have |x| > 0
+            w = int(0.2 * fps)
+            xs = pts3[max(0, k - w):k + w + 1, 0]
+            if xs.min() < 0 < xs.max():
+                cross_err.append((abs(pts3[k][0]), (f0 + k) in filled))
+            else:
+                sweeps.append(abs(pts3[k][0]))
     p_end = pts3[-1]
     if p_end[1] <= 0.05:  # rally ended on the floor
         landings += 1
@@ -87,6 +95,9 @@ for lab, sel in [("arc", [e for e, f in cross_err if not f]),
         print(f"DEPTH net-crossings ({lab}): {len(sel)}, median |x| "
               f"{np.median(sel):.2f}m, p90 {np.percentile(sel, 90):.2f}m "
               f"(goal <=0.5)")
+if sweeps:
+    print(f"DEPTH band-sweeps (no side change, unscored): {len(sweeps)}, "
+          f"median |x| {np.median(sweeps):.2f}m")
 if landings:
     print(f"DEPTH landings: {land_in}/{landings} in court+1m "
           f"({land_in / landings * 100:.0f}%, goal >=80%)")
