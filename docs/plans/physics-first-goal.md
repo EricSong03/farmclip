@@ -12,6 +12,14 @@ Loop until ALL of these hold, then stop:
    "trajectories", no flat cross-gym lines), verified by inspecting renders.
 
 Progress log (newest first):
+- iter 5: ALL quantitative targets met. rms_ok 14→10 (spend coverage
+  headroom on arc quality): menlo 2.4/9.9px 96% ✓✓✓, mikasa 2.7/11.0px
+  93% ✓✓✓. Drag: implemented, measured twice, WORSE on holdout both
+  clips (marginal-MSE wins didn't generalize; emission mismatch bug also
+  found) — reverted, decision recorded, don't retry without new evidence.
+  Suspect-anchor crops: f402-408 = junk (net antenna consensus),
+  f210/f720-766 = real spike-blur streaks. Remaining for goal: streak
+  measurement + size-depth hints (spec), visual cleanliness pass.
 - iter 4: never-vanish fill implemented (touch extrapolation + BVP middle
   + speed/wall/stray gates). menlo arcs 2.4/9.9px ✓✓ 96% cov ✓;
   mikasa arcs 2.8/13.6px (p90 1.6 over), 92% cov ✓, fill median 7.8px.

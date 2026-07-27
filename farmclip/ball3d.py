@@ -196,7 +196,7 @@ def fit_segment(seg, calib, fps, rms_ok=15.0, x0=None):
     return seg[:, 0].astype(int), pts, rms, out.x
 
 
-def lift(track, calib, fps, min_len=5, rms_ok=14.0, segmenter="greedy"):
+def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
     """Full pipeline: 2D track -> {frame: [x,y,z]}.
 
     Emits EVERY frame across a fitted segment's span (dense), not just
