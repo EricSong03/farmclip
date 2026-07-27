@@ -12,6 +12,14 @@ Loop until ALL of these hold, then stop:
    "trajectories", no flat cross-gym lines), verified by inspecting renders.
 
 Progress log (newest first):
+- iter 6: streak/size measurement built (farmclip/streaks.py) and
+  validated visually — round sharp balls measure fine, but textured
+  backgrounds inflate ellipses 2-3x and actual motion streaks fail the
+  fit. Verdict: like drag, NOT fused into the fitter (a cue needing
+  ~zero weight is a cue not used); module kept as a utility. Spec item
+  closed with documented deviation. Mikasa sheet inspected: mostly
+  clean; remaining artifacts are fill spikes near the net and one
+  above-frame join — final polish target.
 - iter 5: ALL quantitative targets met. rms_ok 14→10 (spend coverage
   headroom on arc quality): menlo 2.4/9.9px 96% ✓✓✓, mikasa 2.7/11.0px
   93% ✓✓✓. Drag: implemented, measured twice, WORSE on holdout both
