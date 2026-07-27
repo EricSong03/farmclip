@@ -247,22 +247,20 @@ def lift(track, calib, fps, min_len=5, rms_ok=14.0, segmenter="greedy"):
         # merge pass: velocity breaks over-cut on anchor noise. If ONE
         # ballistic fit explains two adjacent arcs' anchors, they were the
         # same flight — physics decides, not the threshold.
-        merged = True
-        while merged:
-            merged = False
-            for i in range(len(pairs) - 1):
-                (sa, fa), (sb, fb) = pairs[i], pairs[i + 1]
-                if fa is None and fb is None:
-                    continue
-                if sb[0, 0] - sa[-1, 0] > fps * 0.5:
-                    continue
-                both = np.vstack([sa, sb])
-                trial = fit_segment(both, calib, fps, rms_ok,
-                                    x0=(fa or fb)[3])
-                if trial is not None:
-                    pairs[i:i + 2] = [(both, trial)]
-                    merged = True
-                    break
+        # forward scan, extend-in-place on success: each pair is attempted
+        # once, successful merges immediately try to grow further right
+        i = 0
+        while i < len(pairs) - 1:
+            (sa, fa), (sb, fb) = pairs[i], pairs[i + 1]
+            if (fa is None and fb is None) or sb[0, 0] - sa[-1, 0] > fps * 0.5:
+                i += 1
+                continue
+            both = np.vstack([sa, sb])
+            trial = fit_segment(both, calib, fps, rms_ok, x0=(fa or fb)[3])
+            if trial is not None:
+                pairs[i:i + 2] = [(both, trial)]   # stay: try growing further
+            else:
+                i += 1
         fits = [f for _, f in pairs if f is not None]
     else:
         for run in runs(track):
@@ -308,20 +306,87 @@ def lift(track, calib, fps, min_len=5, rms_ok=14.0, segmenter="greedy"):
         for fr in range(f0, f1 + 1):
             t = (fr - f0) / fps
             out[fr] = (p0 + v0 * t + 0.5 * G * t * t).tolist()
-    # bridge short inter-segment gaps (the touch moment): linear between the
-    # adjacent flight endpoints — the ball is at/near the touching player.
-    # A touch is split-second and local: long/far bridges drew straight
-    # cross-gym "trajectories", so both limits are tight now.
-    frames_sorted = sorted(out)
-    for a, b in zip(frames_sorted, frames_sorted[1:]):
-        gap = b - a
-        if 1 < gap <= int(fps * 0.25):
-            pa, pb = np.array(out[a]), np.array(out[b])
-            if np.linalg.norm(pb - pa) > 2.5:
-                continue  # endpoints too far apart: not the same touch, don't teleport
-            for k in range(1, gap):
-                u = k / gap
-                out[a + k] = (pa * (1 - u) + pb * u).tolist()
+    # never-vanish fill (docs/plans/ball-never-vanishes.md): inside a rally
+    # the ball is continuous. Gaps between joinable arcs are filled by
+    # extrapolating both arcs to their closest approach (the inferred touch);
+    # rally-ending arcs continue ballistically to the floor.
+    def ext(fit, fr):
+        p0, v0 = fit[3][:3], fit[3][3:]
+        t = (fr - fit[0][0]) / fps
+        return p0 + v0 * t + 0.5 * G * t * t
+
+    filled = set()
+    fitted_anchor_frames = {int(f) for fit in fits for f in fit[0]}
+    anchor_frames = track[track[:, 3] > 0][:, 0].astype(int)
+    for i, fit in enumerate(fits):
+        a_end = int(fit[0][-1])
+        nxt = fits[i + 1] if i + 1 < len(fits) else None
+        b_start = int(nxt[0][0]) if nxt is not None else None
+        joined = False
+        # consensus anchors inside the gap that NO arc could explain =
+        # a ball that isn't flying (held, serve prep) = rally boundary
+        stray = 0
+        if nxt is not None:
+            in_gap = (anchor_frames > a_end) & (anchor_frames < b_start)
+            stray = sum(1 for f in anchor_frames[in_gap]
+                        if f not in fitted_anchor_frames)
+        if nxt is not None and stray < 3 and 1 < b_start - a_end <= fps * 2.5:
+            frs = np.arange(a_end + 1, b_start)
+            gap_s = len(frs) / fps
+            if gap_s <= 1.2:
+                # short gap: extrapolate both arcs to the inferred touch
+                da = np.array([ext(fit, f) for f in frs])
+                db = np.array([ext(nxt, f) for f in frs])
+                d = np.linalg.norm(da - db, axis=1)
+                k = int(np.argmin(d))
+                if d[k] <= 3.0:  # joinable: same rally
+                    r = db[k] - da[k]
+                    pts = np.array([
+                        da[j] + r * ((j + 1) / (k + 1)) / 2 if j <= k
+                        else db[j] - r * ((len(frs) - j) / (len(frs) - k)) / 2
+                        for j in range(len(frs))])
+                    joined = True
+            else:
+                # long gap: extrapolation diverges — cap it at 0.6s per side
+                # and connect the middle with a boundary-value parabola
+                # (unique free flight between the two capped endpoints)
+                cap = int(0.6 * fps)
+                ja, jb = min(cap, len(frs)) - 1, max(len(frs) - cap, 0)
+                pa, pb = ext(fit, frs[ja]), ext(nxt, frs[jb])
+                T = (frs[jb] - frs[ja]) / fps if jb > ja else 0
+                vb = (pb - pa - 0.5 * G * T * T) / T if T else None
+                # the connecting flight must be humanly plausible — a fast
+                # flat parabola across the gym is a teleport in disguise
+                if vb is not None and np.linalg.norm(vb) <= 20.0:
+                    pts = np.empty((len(frs), 3))
+                    for j, f in enumerate(frs):
+                        if j <= ja:
+                            pts[j] = ext(fit, f)
+                        elif j >= jb:
+                            pts[j] = ext(nxt, f)
+                        else:
+                            t = (f - frs[ja]) / fps
+                            pts[j] = pa + vb * t + 0.5 * G * t * t
+                    joined = True
+            if joined:
+                pts = np.clip(pts, [-12, 0, -9], [12, 10, 9])
+                for f, p in zip(frs, pts):
+                    out[int(f)] = list(p)
+                    filled.add(int(f))
+        if not joined:
+            # rally ends here: continue the last flight to the floor (≤1s),
+            # stopping at the gym walls — a ball that exits the volume exits
+            # the scene, it doesn't dive through the corner of the frame
+            for f in range(a_end + 1, a_end + int(fps) + 1):
+                if f in out:
+                    break
+                p = ext(fit, f)
+                if abs(p[0]) > 12 or abs(p[2]) > 9:
+                    break
+                out[f] = [p[0], max(p[1], 0.0), p[2]]
+                filled.add(f)
+                if p[1] <= 0:
+                    break
     # teleport smoother: adjacent-segment junctions can still jump within one
     # frame; crossfade a +-3-frame window over any superphysical step
     frames_sorted = sorted(out)
@@ -335,4 +400,4 @@ def lift(track, calib, fps, min_len=5, rms_ok=14.0, segmenter="greedy"):
             for fr in range(lo, hi + 1):
                 u = (fr - lo) / max(hi - lo, 1)
                 out[fr] = (pl * (1 - u) + ph * u).tolist()
-    return out, n_seg, n_ok
+    return out, n_seg, n_ok, filled

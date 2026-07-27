@@ -26,25 +26,31 @@ anchors = track[track[:, 3] > 0]
 print(f"{name}: {len(anchors)} consensus anchors / {len(track)} frames")
 
 # --- full fit ---
-ball3d, n_seg, n_ok = lift(track, calib, fps, segmenter="velocity")
+ball3d, n_seg, n_ok, filled = lift(track, calib, fps, segmenter="velocity")
 print(f"full fit: {n_ok} arcs, {len(ball3d)} 3D frames "
-      f"({len(ball3d) / len(track) * 100:.0f}% coverage)")
+      f"({len(ball3d) / len(track) * 100:.0f}% coverage, "
+      f"{len(filled)} physics-filled)")
 
 # --- holdout: drop 20% of anchors, refit, measure px error at held-out ones ---
 hold = rng.random(len(track)) < 0.20
 t2 = track.copy()
 t2[hold, 3] = 0
-fit2, _, _ = lift(t2, calib, fps, segmenter="velocity")
+fit2, _, _, filled2 = lift(t2, calib, fps, segmenter="velocity")
 held = track[hold & (track[:, 3] > 0)]
-errs = []
+arc_e, fill_e = [], []
 for fr, x, y, _ in held:
     if int(fr) in fit2:
         uv = _project(calib, [fit2[int(fr)]])[0]
-        errs.append(np.hypot(uv[0] - x, uv[1] - y))
-covered = len(errs) / max(len(held), 1)
-if errs:
-    print(f"HOLDOUT: median {np.median(errs):.1f}px, p90 {np.percentile(errs, 90):.1f}px, "
-          f"{covered * 100:.0f}% of {len(held)} held-out anchors covered by an arc")
+        (fill_e if int(fr) in filled2 else arc_e).append(
+            np.hypot(uv[0] - x, uv[1] - y))
+n_cov = len(arc_e) + len(fill_e)
+if arc_e:
+    print(f"HOLDOUT arcs: median {np.median(arc_e):.1f}px, "
+          f"p90 {np.percentile(arc_e, 90):.1f}px ({len(arc_e)} anchors)")
+if fill_e:
+    print(f"HOLDOUT fill: median {np.median(fill_e):.1f}px, "
+          f"p90 {np.percentile(fill_e, 90):.1f}px ({len(fill_e)} anchors)")
+print(f"HOLDOUT coverage: {n_cov / max(len(held), 1) * 100:.0f}% of {len(held)}")
 
 # --- overlay contact sheet: mid-frame of up to 12 arcs, trail = fitted path ---
 frames_fit = sorted(ball3d)

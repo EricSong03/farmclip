@@ -116,7 +116,7 @@ def run_ball(clip: Path, out: Path, calib: dict, fps: float):
     cols = ["Frame", "X", "Y", "Visibility"]
     track = consensus(dfs[0][cols].to_numpy(float), dfs[1][cols].to_numpy(float))
     track = reject_outliers(track)
-    ball3d, n_seg, n_ok = lift(track, calib, fps, segmenter="velocity")
+    ball3d, n_seg, n_ok, _ = lift(track, calib, fps, segmenter="velocity")
     print(f"ball: {int((track[:, 3] > 0).mean() * 100)}% consensus anchors, "
           f"{n_ok}/{n_seg} segments fitted, {len(ball3d)} 3D frames")
     return ball3d
