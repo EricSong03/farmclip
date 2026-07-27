@@ -26,6 +26,9 @@ raw ball frames (spike blur, net crossings). Threshold tuning is exhausted.
   ensemble-consensus, ballistic-fit-backed single-model detections, and
   gap-interpolated frames inside accepted fits where BOTH models missed —
   that last class is the spike-blur / net-crossing frames this run must fix.
+  Convention: frames where the ball left the camera frame are Visibility=0
+  (excluded). The detector must never learn to guess off-screen balls —
+  the ballistic fit owns those frames at runtime.
 
 ## Task 1 — player detector (fully scripted)
 

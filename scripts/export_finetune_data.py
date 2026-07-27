@@ -30,6 +30,32 @@ def physics_frames(outdir):
     return {i for i, fr in enumerate(scene["frames"]) if fr.get("ball")}
 
 
+def offscreen_gaps(out, keep, filled, outdir):
+    """Gaps whose surrounding detections hug the same frame edge: the ball
+    almost certainly left the frame (straight up is common in volleyball).
+    Don't label those — physics owns off-screen, not the detector."""
+    import cv2
+    cap = cv2.VideoCapture(str(outdir / "clip.mp4"))
+    w, h = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    cap.release()
+    m = 0.12  # edge margin, fraction of frame size
+    bad = pd.Series(False, index=out.index)
+    idx = out.index[filled].to_numpy()
+    if not len(idx):
+        return bad
+    starts = [idx[0]] + [j for i, j in zip(idx, idx[1:]) if j > i + 1]
+    ends = [i for i, j in zip(idx, idx[1:]) if j > i + 1] + [idx[-1]]
+    kept = out.index[keep].to_numpy()
+    for s, e in zip(starts, ends):
+        p, q = kept[kept < s][-1], kept[kept > e][0]
+        near = lambda i, edge: (
+            out.Y[i] < m * h if edge == "top" else
+            out.X[i] < m * w if edge == "left" else out.X[i] > (1 - m) * w)
+        if any(near(p, ed) and near(q, ed) for ed in ("top", "left", "right")):
+            bad.loc[s:e] = True
+    return bad
+
+
 def export(outdir, name, dest):
     dfs = []
     for sub in ("ball0", "ball1"):
@@ -58,6 +84,7 @@ def export(outdir, name, dest):
     gap = in_fit & ~(a.Visibility > 0) & ~(b.Visibility > 0).values
     xy = out[["X", "Y"]].where(keep).interpolate(limit=9, limit_area="inside")
     filled = gap & xy.X.notna()
+    filled &= ~offscreen_gaps(out, keep, filled, outdir)
     out.loc[filled, ["X", "Y"]] = xy.loc[filled].round().astype(a.X.dtype)
     keep = keep | filled
     out["Visibility"] = keep.astype(int)
