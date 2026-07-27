@@ -34,14 +34,16 @@
   <span class="k">&larr;/&rarr;</span> back / forward ·
   corrections auto-save to <code>out/finetune/ball/&lt;name&gt;.labeled.csv</code>
 </div>
-<video id="vid" style="display:none" muted></video>
+<video id="vid" style="display:none" muted preload="auto"></video>
 
 <script>
 // ponytail: runs hardcoded — add a line here per new clip. fps is the frame
 // rate the label csv was indexed at (mikasa csvs are 60fps-native).
+// videos are the *_h264.mp4 re-encodes — the pipeline's mp4v originals don't
+// decode in browsers. Regenerate: ffmpeg -i clip.mp4 -c:v libx264 -crf 22 clip_h264.mp4
 const RUNS = [
-  { name: "menlo",  video: "out/clip.mp4",        fps: 30, balls: "out" },
-  { name: "mikasa", video: "out/mikasa/clip.mp4", fps: 60, balls: "out/mikasa" },
+  { name: "menlo",  video: "out/clip_h264.mp4",        fps: 30, balls: "out" },
+  { name: "mikasa", video: "out/mikasa/clip_h264.mp4", fps: 60, balls: "out/mikasa" },
 ];
 
 const $ = id => document.getElementById(id);
@@ -150,15 +152,26 @@ function next() {
 
 function show() {
   const { run, idx } = history[hi];
-  const go = () => { vid.currentTime = (run.rows[idx].frame + 0.5) / run.cfg.fps; };
+  const go = () => {
+    const t = (run.rows[idx].frame + 0.5) / run.cfg.fps;
+    if (Math.abs(vid.currentTime - t) < 1e-4) draw();   // seek to same spot fires no event
+    else vid.currentTime = t;
+  };
   if (current !== run) {
     current = run;
     vid.src = run.videoUrl;
-    vid.onloadeddata = go;
-  } else go();
+    vid.onloadedmetadata = go;
+  } else if (vid.readyState === 0) vid.onloadedmetadata = go;
+  else go();
 }
 
 vid.addEventListener("seeked", draw);
+vid.addEventListener("error", () => {
+  const name = current ? current.cfg.video : "?";
+  $("progress").textContent =
+    `cannot decode ${name} (${vid.error && vid.error.message || "codec unsupported"}) — ` +
+    `re-encode with: ffmpeg -i in.mp4 -c:v libx264 -crf 20 out.mp4`;
+});
 
 function draw() {
   if (hi < 0) return;
