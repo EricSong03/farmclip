@@ -52,12 +52,21 @@ def export(outdir, name, dest):
 
     out = a[["Frame", "X", "Y"]].copy()
     out.loc[only_b, ["X", "Y"]] = b.loc[only_b, ["X", "Y"]].values
+    # Frames inside an accepted fit where BOTH models missed are the hard
+    # cases (spike blur, net crossings) — the whole point of the fine-tune.
+    # Label them by interpolating between surrounding kept detections.
+    gap = in_fit & ~(a.Visibility > 0) & ~(b.Visibility > 0).values
+    xy = out[["X", "Y"]].where(keep).interpolate(limit=9, limit_area="inside")
+    filled = gap & xy.X.notna()
+    out.loc[filled, ["X", "Y"]] = xy.loc[filled].round().astype(a.X.dtype)
+    keep = keep | filled
     out["Visibility"] = keep.astype(int)
     out.loc[~keep, ["X", "Y"]] = 0
     out = out[["Frame", "Visibility", "X", "Y"]].astype(int)
     out.to_csv(dest / f"{name}.csv", index=False)
     print(f"{name}: {keep.sum()}/{n} labeled "
-          f"({int((both & close).sum())} consensus, {int((only_a | only_b).sum())} fit-backed)")
+          f"({int((both & close).sum())} consensus, {int((only_a | only_b).sum())} fit-backed, "
+          f"{int(filled.sum())} gap-interpolated)")
     return keep.sum()
 
 

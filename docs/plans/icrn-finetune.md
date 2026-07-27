@@ -22,10 +22,18 @@ raw ball frames (spike blur, net crossings). Threshold tuning is exhausted.
 - `videos/` — the source clips: `out/clip.mp4` (menlo, 1 min 720p30) and the
   mikasa vod first ~11 min re-encoded to mp4 (any name, `.mp4` extension).
 - `out/finetune/ball/*.csv` — ball labels (`Frame,Visibility,X,Y`, one csv per
-  clip, produced locally by `scripts/export_finetune_data.py`). These are
-  high-confidence labels: ensemble-consensus + ballistic-fit-backed detections.
+  clip, produced locally by `scripts/export_finetune_data.py`). Three classes:
+  ensemble-consensus, ballistic-fit-backed single-model detections, and
+  gap-interpolated frames inside accepted fits where BOTH models missed —
+  that last class is the spike-blur / net-crossing frames this run must fix.
 
 ## Task 1 — player detector (fully scripted)
+
+**Step 0 — gate the teacher before training.** Run yolo11x @ 1536 on ~5 menlo
+frames that show far-side players behind the net and render overlays. If the
+teacher also misses them, pseudo-labels inherit the blindness and the student
+learns "nothing there" — in that case the Roboflow merge below is REQUIRED,
+not optional, before training.
 
 ```
 pip install ultralytics opencv-python-headless
@@ -54,17 +62,26 @@ Fine-tune VballNet from its pretrained checkpoint on our labels.
 2. Arrange our data in its expected dataset layout (TrackNet-style: per-clip
    video + `Frame,Visibility,X,Y` csv — our csvs are already in that format;
    frames with `Visibility=0` are unlabeled, exclude or mask them, they are NOT
-   confirmed ball-absent).
+   confirmed ball-absent). **fps note:** menlo is 30fps, mikasa is 60fps, and
+   VballNet stacks 9 consecutive frames — build mikasa training sequences at
+   frame stride 2 so per-frame ball displacement matches menlo and the
+   pretrained checkpoint's motion scale (inference runs at native fps, so keep
+   some native-stride mikasa sequences too if the trainer makes that easy).
 3. Fine-tune from the pretrained checkpoint (low LR, ~10-20 epochs is the
    TrackNet-family norm for adaptation; a few GPU-hours max).
 4. Export ONNX **matching the inference contract** of
    `fast-vb-tracking/src/inference_onnx_seq_gray_v2.py`: same input tensor
    (9-channel grayscale stack, 288x512) and output heatmap as
-   `VballNetV1c_seq9_grayscale_best.onnx`. Verify with onnxruntime CPU EP:
-   load both old and new ONNX, run one identical input, confirm same shapes.
-- **Acceptance:** hold out ~10% of labeled frames; fine-tuned model must beat
-  the pretrained checkpoint on Acc@5px on the held-out set, especially on
-  frames the consensus marked but a single model missed.
+   `VballNetV1c_seq9_grayscale_best.onnx`. Verify export **numerically**, not
+   just by shape: first re-export the UNCHANGED pretrained checkpoint through
+   your export path and confirm its heatmap matches the vendor ONNX within
+   tolerance (max abs diff < 1e-3) on one real 9-frame input via onnxruntime
+   CPU EP. Only then trust the fine-tuned export through the same path.
+- **Acceptance:** hold out a TIME-DISJOINT segment (e.g. the last ~90s of
+  mikasa), never trained on — random 10% of frames from trained clips mostly
+  measures memorization of the same rallies. Fine-tuned model must beat the
+  pretrained checkpoint on Acc@5px on that held-out segment, and separately on
+  the fit-backed + gap-interpolated label classes (the hard frames).
 
 ## Deliverables to hand back
 
@@ -72,6 +89,11 @@ Fine-tune VballNet from its pretrained checkpoint on our labels.
 - `vballnet-vb-finetuned.onnx`
 - A short metrics note: player val mAP50 (before/after), ball held-out Acc@5px
   (before/after), and anything surprising.
+
+Scope honesty: these artifacts are tuned to these two venues. That's fine —
+the current goal is these videos. A new gym may need a repeat of this runbook
+with that venue's footage (the export script regenerates labels from any
+pipeline run, so the loop is cheap).
 
 ## Local wiring after download (for reference, done back on the laptop)
 
