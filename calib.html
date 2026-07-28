@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>farmclip — calibration clicker</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #111; color: #ddd; }
+  #bar { display: flex; gap: 12px; align-items: center; padding: 8px 12px; background: #1b1b1b; flex-wrap: wrap; }
+  canvas { display: block; max-width: 100vw; cursor: crosshair; }
+  button { background: #333; color: #ddd; border: 1px solid #555; padding: 4px 10px; cursor: pointer; }
+  #cur { color: #ffd54f; font-weight: 600; }
+  #saved { color: #8bc34a; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="open">open project folder</button>
+  <select id="run"></select>
+  <span>click: <span id="cur">—</span></span>
+  <button id="skip">skip (not visible)</button>
+  <button id="undo">undo</button>
+  <span id="saved"></span>
+</div>
+<canvas id="cv"></canvas>
+<div style="padding:6px 12px;color:#aaa">
+  Click each named point on the frame (zoom: browser zoom works fine).
+  <b>skip</b> if it's out of frame / occluded. Auto-saves
+  <code>&lt;outdir&gt;/annotations.json</code> after every click.
+  Aim for 8+ points including net tops / antenna tips — off-floor points
+  matter most.
+</div>
+
+<script>
+// ponytail: runs hardcoded, same convention as label.html RUNS
+const RUNS = [
+  { name: "menlo",  dir: "out",        frame: "debug/ref_frame.jpg" },
+  { name: "mikasa", dir: "out/mikasa", frame: "debug/ref_frame.jpg" },
+];
+const POINTS = [
+  "corner_far_left", "corner_far_right", "corner_near_left", "corner_near_right",
+  "attack_far_left", "attack_far_right", "attack_near_left", "attack_near_right",
+  "center_left", "center_right",
+  "net_top_left", "net_top_right",
+  "antenna_tip_left", "antenna_tip_right",
+  "post_top_left", "post_top_right", "post_base_left", "post_base_right",
+];
+const $ = id => document.getElementById(id);
+const cv = $("cv"), ctx = cv.getContext("2d");
+let dir = null, runCfg = null, img = new Image(), ann = {}, order = [], oi = 0;
+
+async function getHandle(root, path, opts) {
+  const parts = path.split("/");
+  let d = root;
+  for (const p of parts.slice(0, -1)) d = await d.getDirectoryHandle(p, opts);
+  return d.getFileHandle(parts.at(-1), opts);
+}
+
+$("open").onclick = async () => {
+  dir = await showDirectoryPicker({ mode: "readwrite" });
+  $("run").innerHTML = RUNS.map((r, i) => `<option value="${i}">${r.name}</option>`).join("");
+  loadRun(0);
+};
+$("run").onchange = e => loadRun(+e.target.value);
+
+async function loadRun(i) {
+  runCfg = RUNS[i];
+  ann = {};
+  try {
+    const f = await (await getHandle(dir, `${runCfg.dir}/annotations.json`)).getFile();
+    ann = JSON.parse(await f.text());
+  } catch {}
+  order = POINTS.filter(p => !(p in ann));
+  oi = 0;
+  const fh = await getHandle(dir, `${runCfg.dir}/${runCfg.frame}`);
+  img.src = URL.createObjectURL(await fh.getFile());
+  img.onload = draw;
+}
+
+function draw() {
+  cv.width = img.width; cv.height = img.height;
+  ctx.drawImage(img, 0, 0);
+  for (const [k, [x, y]] of Object.entries(ann)) {
+    if (x === null) continue;
+    ctx.strokeStyle = "#4caf50"; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x - 10, y); ctx.lineTo(x + 10, y);
+    ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10);
+    ctx.stroke();
+    ctx.fillStyle = "#4caf50"; ctx.font = "12px monospace";
+    ctx.fillText(k, x + 6, y - 6);
+  }
+  $("cur").textContent = oi < order.length ? order[oi] :
+    "DONE — all points handled";
+}
+
+async function save() {
+  const out = {};
+  for (const [k, v] of Object.entries(ann)) if (v && v[0] !== null) out[k] = v;
+  const fh = await getHandle(dir, `${runCfg.dir}/annotations.json`, { create: true });
+  const w = await fh.createWritable();
+  await w.write(JSON.stringify(out, null, 1)); await w.close();
+  $("saved").textContent = "saved ✓";
+  setTimeout(() => { $("saved").textContent = ""; }, 1000);
+}
+
+cv.addEventListener("click", e => {
+  if (oi >= order.length) return;
+  const r = cv.getBoundingClientRect();
+  ann[order[oi]] = [
+    Math.round((e.clientX - r.left) * cv.width / r.width * 10) / 10,
+    Math.round((e.clientY - r.top) * cv.height / r.height * 10) / 10];
+  oi++; save(); draw();
+});
+$("skip").onclick = () => {
+  if (oi >= order.length) return;
+  ann[order[oi]] = [null, null];
+  oi++; save(); draw();
+};
+$("undo").onclick = () => {
+  if (oi > 0) { oi--; delete ann[order[oi]]; save(); draw(); }
+};
+</script>
+</body>
+</html>
