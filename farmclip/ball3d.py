@@ -196,8 +196,49 @@ def fit_segment(seg, calib, fps, rms_ok=15.0, x0=None):
     return seg[:, 0].astype(int), pts, rms, out.x
 
 
-def _net_mid(calib):
-    """Image-space net midline (x_img -> y_img), cached on the calib dict."""
+def measure_net_bands(video, calib, fps, every_s=30.0):
+    """Detect the net's top band in the actual pixels every ~every_s and
+    stash the segments on the calib dict. Trigger lines built from real
+    pixels are immune to both calibration bias (mikasa projects the net
+    ~50px high, err 16.7px) and camera drift over long videos."""
+    from .lines import detect_segments
+    h, w = calib["img_h"], calib["img_w"]
+    cap = cv2.VideoCapture(str(video))
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    bands = []
+    for fr in range(0, n, int(every_s * fps)):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, fr)
+        ok, img = cap.read()
+        if not ok:
+            continue
+        segs = detect_segments(img)
+        cand = [s for s in segs
+                if abs(s[3] - s[1]) / max(abs(s[2] - s[0]), 1) < 0.1
+                and h * 0.2 < (s[1] + s[3]) / 2 < h * 0.6
+                and abs(s[2] - s[0]) > w * 0.45]
+
+        def ymid(s):
+            return (s[1] + s[3]) / 2
+        paired = [s for s in cand
+                  if any(20 < ymid(o) - ymid(s) < 80 for o in cand if o is not s)]
+        pool = paired or cand
+        if pool:
+            bands.append((fr, min(pool, key=ymid)))
+    cap.release()
+    if bands:
+        calib["_net_bands"] = bands
+    return len(bands)
+
+
+def _net_mid(calib, frame=None):
+    """Image-space net trigger line (x_img -> y_img). Prefers the measured
+    band nearest `frame`; falls back to the projected net midline."""
+    if frame is not None and calib.get("_net_bands"):
+        fr, s = min(calib["_net_bands"], key=lambda b: abs(b[0] - frame))
+        (x0, y0, x1, y1) = s[:4]
+        if x0 > x1:
+            x0, y0, x1, y1 = x1, y1, x0, y0
+        return np.array([x0, x1], float), np.array([y0, y1], float)
     if "_netuv" not in calib:
         m = _project(calib, [[0.0, 1.7, z] for z in np.linspace(-4.5, 4.5, 50)])
         o = np.argsort(m[:, 0])
@@ -256,12 +297,12 @@ def refine_chains(pairs, calib, fps, max_gap_s=2.5):
         # net-plane anchors: band-crossing times of the chain's dense
         # projected path. Inside the chain, pooled pixels + continuity make
         # occasional sweep-misclassifications survivable (soft_l1 tail).
-        nx_, ny_ = _net_mid(calib)
         W_N = 15.0
 
         def net_events(P):
             ev = []  # (arc index k, local time tc)
             for k in range(n):
+                nx_, ny_ = _net_mid(calib, frame=f0s[k])
                 span = segs[k][-1, 0] - f0s[k]
                 td = np.arange(0, span + 1) / fps
                 duv = _project(calib, pos(P, k, td))
@@ -513,7 +554,7 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
                 # fills own most real net crossings (spike blur = detection
                 # gap): if the fill's projection crosses the net band, bend
                 # it to cross the plane there, keeping the endpoints fixed
-                nx_, ny_ = _net_mid(calib)
+                nx_, ny_ = _net_mid(calib, frame=frs[0])
                 fuv = _project(calib, pts)
                 finb = (fuv[:, 0] >= nx_[0]) & (fuv[:, 0] <= nx_[-1])
                 frel = fuv[:, 1] - np.interp(fuv[:, 0], nx_, ny_)
@@ -548,7 +589,7 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
                 # point-winning shots cross the net inside this extension:
                 # bend x so the crossing sits on the plane (start stays
                 # continuous with the arc; landing shifts by the correction)
-                nx_, ny_ = _net_mid(calib)
+                nx_, ny_ = _net_mid(calib, frame=ext_f[0])
                 euv = _project(calib, pts)
                 einb = (euv[:, 0] >= nx_[0]) & (euv[:, 0] <= nx_[-1])
                 erel = euv[:, 1] - np.interp(euv[:, 0], nx_, ny_)

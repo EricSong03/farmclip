@@ -12,7 +12,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from farmclip.ball3d import consensus, reject_outliers, lift, _project, G
+from farmclip.ball3d import (consensus, reject_outliers, lift, _project, G,
+                             measure_net_bands, _net_mid)
 
 outdir, video, fps, name = Path(sys.argv[1]), sys.argv[2], float(sys.argv[3]), sys.argv[4]
 calib = json.loads((outdir / "calib.json").read_text())
@@ -22,6 +23,7 @@ cols = ["Frame", "X", "Y", "Visibility"]
 dfs = [pd.read_csv(list((outdir / f"ball{i}").glob("*/ball.csv"))[0])[cols]
        .to_numpy(float) for i in (0, 1)]
 track = reject_outliers(consensus(*dfs))
+print(f"net bands measured: {measure_net_bands(video, calib, fps)}")
 anchors = track[track[:, 3] > 0]
 print(f"{name}: {len(anchors)} consensus anchors / {len(track)} frames")
 
@@ -53,13 +55,8 @@ if fill_e:
 print(f"HOLDOUT coverage: {n_cov / max(len(held), 1) * 100:.0f}% of {len(held)}")
 
 # --- 3D depth plausibility (docs/plans/depth-accuracy-goal.md) ---
-# net-crossing error: when the projected path passes the net's image
-# midline, the 3D path should be at the net plane (x ~ 0)
-net_z = np.linspace(-4.5, 4.5, 50)
-net_mid = _project(calib, [[0.0, 1.7, z] for z in net_z])
-order = np.argsort(net_mid[:, 0])
-nx, ny = net_mid[order, 0], net_mid[order, 1]
-
+# net-crossing error: when the path passes the net's image band (measured
+# from real pixels), the 3D path should be at the net plane (x ~ 0)
 frames_fit = sorted(ball3d)
 spans = []
 s = frames_fit[0]
@@ -72,6 +69,7 @@ cross_err, sweeps, landings, land_in = [], [], 0, 0
 for f0, f1 in spans:
     pts3 = np.array([ball3d[f] for f in range(f0, f1 + 1)])
     uv = _project(calib, pts3)
+    nx, ny = _net_mid(calib, frame=f0)
     inb = (uv[:, 0] >= nx[0]) & (uv[:, 0] <= nx[-1])
     rel = uv[:, 1] - np.interp(uv[:, 0], nx, ny)
     for k in range(1, len(uv)):

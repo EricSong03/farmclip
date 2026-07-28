@@ -112,7 +112,8 @@ def run_ball(clip: Path, out: Path, calib: dict, fps: float):
         dfs.append(pd.read_csv(csvs[0]))
     # physics-first (docs/specs/ball-physics-first.md): consensus anchors
     # only, velocity-break segmentation, no detection-side interpolation
-    from .ball3d import consensus, reject_outliers
+    from .ball3d import consensus, reject_outliers, measure_net_bands
+    measure_net_bands(clip, calib, fps)
     cols = ["Frame", "X", "Y", "Visibility"]
     track = consensus(dfs[0][cols].to_numpy(float), dfs[1][cols].to_numpy(float))
     track = reject_outliers(track)
@@ -161,7 +162,9 @@ def main(argv=None):
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--end", type=float, default=60.0)
     ap.add_argument("--out", default="out")
-    ap.add_argument("--player-model", default="yolo11s.pt")
+    _ft = "finetune_out/yolo11s-vb.pt"  # H200 fine-tune, see docs/plans/icrn-finetune-results.md
+    ap.add_argument("--player-model",
+                    default=_ft if Path(_ft).exists() else "yolo11s.pt")
     ap.add_argument("--player-imgsz", type=int, default=1280)
     ap.add_argument("--per-side", type=int, default=6)
     ap.add_argument("--player-step", type=int, default=1)
