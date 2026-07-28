@@ -6,3 +6,6 @@ vendor/
 examples/*.mp4
 examples/samples/**/clip.mp4
 __pycache__/
+player_dataset/
+runs/
+finetune_out/

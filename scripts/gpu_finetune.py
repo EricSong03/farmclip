@@ -12,7 +12,6 @@ Outputs land in finetune_out/.
 Deps: pip install ultralytics opencv-python-headless
 """
 import argparse
-import random
 import shutil
 from pathlib import Path
 
@@ -36,10 +35,14 @@ def players_data(videos_dir):
     for split in ("train", "val"):
         (DATA / "images" / split).mkdir(parents=True, exist_ok=True)
         (DATA / "labels" / split).mkdir(parents=True, exist_ok=True)
-    rng = random.Random(0)
     n_img = 0
     for vid in sorted(Path(videos_dir).glob("*.mp4")):
         cap = cv2.VideoCapture(str(vid))
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        # time-disjoint val: the temporally-LAST VAL_FRAC of each clip is held
+        # out (never adjacent to a train frame), not a random 10% shuffle — so
+        # the val score can't be inflated by frame-adjacency leakage.
+        val_start = int(total * (1.0 - VAL_FRAC))
         i = 0
         while True:
             ok, frame = cap.read()
@@ -49,7 +52,7 @@ def players_data(videos_dir):
                 r = model.predict(frame, classes=[0], conf=TEACHER_CONF,
                                   imgsz=TEACHER_IMGSZ, verbose=False)[0]
                 if len(r.boxes):
-                    split = "val" if rng.random() < VAL_FRAC else "train"
+                    split = "val" if i >= val_start else "train"
                     stem = f"{vid.stem}_{i:06d}"
                     h, w = frame.shape[:2]
                     cv2.imwrite(str(DATA / "images" / split / f"{stem}.jpg"), frame)
