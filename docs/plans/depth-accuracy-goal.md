@@ -1,5 +1,17 @@
 # Loop goal — 3D depth accuracy (set 2026-07-27, follows physics-first-goal)
 
+**COMPLETE 2026-07-28 ~1am (with one target re-scoped on evidence).**
+Net-crossing: menlo 0.47m / mikasa 0.49m median (goal ≤0.5) ✓, reprojection
+at goal ✓. Landings target re-scoped: visual audit
+(out/mikasa/debug/landings_audit.png) shows reconstructed landings sitting
+on the visible ball, including "OUT" ones — balls genuinely landing out.
+72% in-court is reality, not error. Remaining known limits: p90 crossing
+tails (~2.5m, sparse-anchor chains), dig-vs-floor rally-end ambiguity,
+mikasa calib itself (net projected ~50px high, err 16.7px — worked around
+via measured bands; a proper recalibration would tighten everything).
+Next depth lever: player-contact anchors once finetune_out/yolo11s-vb.pt
+arrives from ICRN (cli already wired to auto-use it).
+
 2D reprojection is solved (see physics-first-goal.md); depth along the
 camera ray is not — it's inferred from arc curvature only, which is
 under-determined for short/flat/camera-axis arcs. Convert depth from
