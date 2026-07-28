@@ -253,22 +253,27 @@ def refine_chains(pairs, calib, fps, max_gap_s=2.5):
 
         P0 = np.concatenate([pairs[i][1][3] for i in range(lo, hi)])
 
-        # net-plane anchors: band-crossing times of the seeded chain's dense
+        # net-plane anchors: band-crossing times of the chain's dense
         # projected path. Inside the chain, pooled pixels + continuity make
         # occasional sweep-misclassifications survivable (soft_l1 tail).
         nx_, ny_ = _net_mid(calib)
         W_N = 15.0
-        net_ev = []  # (arc index k, local time tc)
-        for k in range(n):
-            span = segs[k][-1, 0] - f0s[k]
-            td = np.arange(0, span + 1) / fps
-            duv = _project(calib, pos(P0, k, td))
-            dinb = (duv[:, 0] >= nx_[0]) & (duv[:, 0] <= nx_[-1])
-            drel = duv[:, 1] - np.interp(duv[:, 0], nx_, ny_)
-            for j in range(1, len(td)):
-                if dinb[j] and dinb[j - 1] and drel[j - 1] * drel[j] < 0:
-                    u = drel[j - 1] / (drel[j - 1] - drel[j])
-                    net_ev.append((k, td[j - 1] + u / fps))
+
+        def net_events(P):
+            ev = []  # (arc index k, local time tc)
+            for k in range(n):
+                span = segs[k][-1, 0] - f0s[k]
+                td = np.arange(0, span + 1) / fps
+                duv = _project(calib, pos(P, k, td))
+                dinb = (duv[:, 0] >= nx_[0]) & (duv[:, 0] <= nx_[-1])
+                drel = duv[:, 1] - np.interp(duv[:, 0], nx_, ny_)
+                for j in range(1, len(td)):
+                    if dinb[j] and dinb[j - 1] and drel[j - 1] * drel[j] < 0:
+                        u = drel[j - 1] / (drel[j - 1] - drel[j])
+                        ev.append((k, td[j - 1] + u / fps))
+            return ev
+
+        net_ev = net_events(P0)
 
         # floor-bounce anchors: junction with a down->up reversal in image y
         # and a short gap = the ball hit the floor there; pixel ray ∩ floor
@@ -305,6 +310,15 @@ def refine_chains(pairs, calib, fps, max_gap_s=2.5):
         sol = least_squares(resid, np.clip(P0, bl, bu), method="trf",
                             max_nfev=4000, loss="soft_l1", f_scale=6.0,
                             bounds=(bl, bu))
+        # second pass: crossing times were detected on the seed; the refined
+        # chain crosses at slightly different times — re-detect and re-solve
+        # to pull in the late/early-crossing tail
+        ev2 = net_events(sol.x)
+        if ev2 != net_ev:
+            net_ev = ev2
+            sol = least_squares(resid, sol.x, method="trf",
+                                max_nfev=2000, loss="soft_l1", f_scale=6.0,
+                                bounds=(bl, bu))
 
         def rms_of(P):
             d = [np.minimum(np.linalg.norm(
