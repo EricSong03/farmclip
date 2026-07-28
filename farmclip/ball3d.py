@@ -419,6 +419,69 @@ def refine_chains(pairs, calib, fps, max_gap_s=2.5):
     return pairs
 
 
+def lift_with_streaks(track, calib, fps, video, max_gap_s=4.0):
+    """Two-pass lift: fit once, run the classical streak detector inside the
+    remaining dark gaps (spike legs where BOTH CNNs go blind), refit with the
+    streak rows as low-weight observations. Physics gates their junk."""
+    from .streaks import detect_streaks
+    out, n_seg, n_ok, filled = lift(track, calib, fps, segmenter="velocity")
+    frames = sorted(out)
+    gaps = [(a, b) for a, b in zip(frames, frames[1:])
+            if 1 < b - a <= fps * max_gap_s]
+    if not gaps:
+        return out, n_seg, n_ok, filled
+    srows = detect_streaks(video, [(a + 1, b - 1) for a, b in gaps])
+    for a, b in gaps:
+        cand = srows[(srows[:, 0] > a) & (srows[:, 0] < b)] if len(srows) else srows
+        if len(cand) < 5:
+            continue
+        # RANSAC leg fit: the candidate cloud is junk-heavy (swinging arms
+        # streak too), so sample minimal sets anchored at one endpoint,
+        # count agreeing streaks, refit the winners. A gap with a contact
+        # can't be one parabola, hence per-endpoint legs.
+        rng = np.random.default_rng(int(a))
+        end_uv = _project(calib, [out[a], out[b]])
+        best = None  # (n_inliers, inlier_rows, anchor_row)
+        for anchor_f, anchor_uv in ((a, end_uv[0]), (b, end_uv[1])):
+            anchor = np.array([[anchor_f, *anchor_uv, 1, 1.0]])
+            for _ in range(40):
+                pick = cand[rng.choice(len(cand), 2, replace=False)]
+                if len({int(r[0]) for r in pick} | {anchor_f}) < 3:
+                    continue
+                seg = np.vstack([anchor, pick])
+                seg = seg[np.argsort(seg[:, 0])]
+                seg[:, 4] = 1.0  # minimal set: all trusted for the probe fit
+                fit = fit_segment(seg, calib, fps, rms_ok=25.0)
+                if fit is None:
+                    continue
+                p0, v0 = fit[3][:3], fit[3][3:]
+                tt = (cand[:, 0] - fit[0][0]) / fps
+                path = p0[None] + v0[None] * tt[:, None] + 0.5 * G[None] * tt[:, None] ** 2
+                d = np.linalg.norm(_project(calib, path) - cand[:, 1:3], axis=1)
+                nin = int((d < 10).sum())
+                if nin >= 5 and (best is None or nin > best[0]):
+                    best = (nin, cand[d < 10], anchor)
+        if best is None:
+            continue
+        nin, inl, anchor = best
+        seg = np.vstack([anchor, np.column_stack([inl[:, :3],
+                                                  np.ones(len(inl)),
+                                                  np.ones(len(inl))])])
+        seg = seg[np.argsort(seg[:, 0])]
+        fit = fit_segment(seg, calib, fps, rms_ok=12.0)
+        if fit is None:
+            continue
+        p0, v0 = fit[3][:3], fit[3][3:]
+        f_ref = int(fit[0][0])
+        lo_f, hi_f = int(seg[0, 0]), int(seg[-1, 0])
+        for f in range(max(lo_f, a + 1), min(hi_f, b - 1) + 1):
+            t = (f - f_ref) / fps
+            pt = p0 + v0 * t + 0.5 * G * t * t
+            out[f] = [pt[0], max(pt[1], 0.0), pt[2]]
+            filled.add(f)
+    return out, n_seg, n_ok, filled
+
+
 def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
     """Full pipeline: 2D track -> {frame: [x,y,z]}.
 

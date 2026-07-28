@@ -44,6 +44,49 @@ def measure_anchor(gray, x, y, crop=64):
     return minor, major, ang, q
 
 
+def detect_streaks(video, frame_ranges, max_per_frame=3):
+    """Classical spike detector: three-frame differencing inside the given
+    frame ranges finds fast-moving elongated blobs (motion-blur streaks) that
+    appearance CNNs miss entirely. Returns rows [frame, x, y, 1, w] ready to
+    join a weighted track; downstream physics gates the junk (swinging arms
+    also streak — only ballistic-coherent runs survive fitting)."""
+    cap = cv2.VideoCapture(str(video))
+    rows = []
+    for f0, f1 in frame_ranges:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(int(f0) - 1, 0))
+        ok, a = cap.read()
+        ok2, b = cap.read()
+        if not (ok and ok2):
+            continue
+        ga = cv2.cvtColor(a, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        gb = cv2.cvtColor(b, cv2.COLOR_BGR2GRAY).astype(np.int16)
+        for f in range(int(f0), int(f1) + 1):
+            ok, c = cap.read()
+            if not ok:
+                break
+            gc = cv2.cvtColor(c, cv2.COLOR_BGR2GRAY).astype(np.int16)
+            # motion present both into and out of frame f -> object AT f
+            m = np.minimum(np.abs(gb - ga), np.abs(gc - gb)) > 16
+            m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_OPEN,
+                                 np.ones((2, 2), np.uint8))
+            cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL,
+                                       cv2.CHAIN_APPROX_SIMPLE)
+            cands = []
+            for cn in cnts:
+                if not (40 < cv2.contourArea(cn) < 2500) or len(cn) < 5:
+                    continue
+                (ex, ey), (a1, a2), ang = cv2.fitEllipse(cn)
+                minor, major = sorted((a1, a2))
+                if major < 14 or minor > 26 or major / max(minor, 1) < 2.2:
+                    continue
+                cands.append((major / max(minor, 1), ex, ey))
+            for _, ex, ey in sorted(cands, reverse=True)[:max_per_frame]:
+                rows.append([f, ex, ey, 1.0, 0.3])
+            ga, gb = gb, gc
+    cap.release()
+    return np.array(rows) if rows else np.empty((0, 5))
+
+
 def measure_track(video, track, step=1):
     """{frame: (minor, major, angle, quality)} for visible anchors."""
     cap = cv2.VideoCapture(str(video))
