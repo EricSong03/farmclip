@@ -19,6 +19,7 @@
   <span>click: <span id="cur">—</span></span>
   <button id="skip">skip (not visible)</button>
   <button id="undo">undo</button>
+  <select id="relabel"><option value="">relabel…</option></select>
   <span id="saved"></span>
 </div>
 <canvas id="cv"></canvas>
@@ -118,6 +119,15 @@ $("skip").onclick = () => {
 };
 $("undo").onclick = () => {
   if (oi > 0) { oi--; delete ann[order[oi]]; save(); draw(); }
+};
+$("relabel").innerHTML += POINTS.map(p => `<option>${p}</option>`).join("");
+$("relabel").onchange = e => {
+  const p = e.target.value;
+  if (!p) return;
+  delete ann[p];
+  order = order.slice(0, oi).concat([p], order.slice(oi));
+  e.target.value = "";
+  save(); draw();
 };
 </script>
 </body>
