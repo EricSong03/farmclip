@@ -24,8 +24,41 @@ VBALLNET_MODELS = [
 ]
 
 
+def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
+                  model: Path) -> dict | None:
+    """AI keypoint path: per-keypoint median over ~10 frames -> solve + polish."""
+    from .kp_detect import detect_keypoints
+    from .calibrate import solve, lm_polish, draw_overlay
+
+    hits, ref = {}, None
+    for i, t, frame in video.read_frames(str(clip), step=max(1, int(n_frames // 10))):
+        if ref is None:
+            ref = (i, frame)
+        for name, uv in detect_keypoints(frame, str(model)).items():
+            hits.setdefault(name, []).append(uv)
+    # median across frames kills per-frame jitter/occlusion; >=3 sightings only
+    pts = {n: tuple(np.median(v, axis=0)) for n, v in hits.items() if len(v) >= 3}
+    if len(pts) < 5:
+        print(f"ai_kp: only {len(pts)} stable keypoints (<5)")
+        return None
+    try:
+        calib = lm_polish(solve(pts, w, h), pts)
+    except Exception as e:
+        print(f"ai_kp: solve failed ({e})")
+        return None
+    calib["method"] = "ai_kp"
+    calib["ref_frame"] = ref[0]
+    (out / "calib.json").write_text(json.dumps(calib, indent=1))
+    dbg = out / "debug"
+    dbg.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(dbg / "calib_overlay.jpg"), draw_overlay(ref[1], calib, pts))
+    print(f"calibrated via ai_kp: {len(pts)} keypoints, err {calib['err']:.1f}px "
+          f"-> {dbg / 'calib_overlay.jpg'}")
+    return calib
+
+
 def calibrate(clip: Path, out: Path):
-    """Auto-calibration: scan frames until a hypothesis passes, polish, save overlay."""
+    """Auto-calibration: AI keypoints if the model exists, else Hough search."""
     from .lines import detect_segments
     from .hypothesis import search
     from .refine_lsq import polish
@@ -35,6 +68,12 @@ def calibrate(clip: Path, out: Path):
 
     info_v = video.video_info(clip)
     w, h = info_v["width"], info_v["height"]
+    kp_model = Path("finetune_out/yolo11s-court.onnx")
+    if kp_model.exists():
+        calib = _calibrate_ai(clip, out, w, h, info_v["frames"], kp_model)
+        if calib is not None:
+            return calib
+        print("ai_kp path failed, falling back to hough search")
     step = max(1, int(info_v["frames"] // 40))
     best = None
     for i, t, frame in video.read_frames(str(clip), step=step):
@@ -82,12 +121,13 @@ def calibrate(clip: Path, out: Path):
     if best is None:
         sys.exit("calibration failed: no frame produced a valid hypothesis")
     _, calib, ref_frame, frame = best
+    calib["method"] = "hough"
     calib["ref_frame"] = ref_frame
     (out / "calib.json").write_text(json.dumps(calib, indent=1))
     dbg = out / "debug"
     dbg.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(dbg / "calib_overlay.jpg"), draw_overlay(frame, calib))
-    print(f"calibrated on frame {ref_frame} (err {calib['err']:.1f}px) "
+    print(f"calibrated via hough on frame {ref_frame} (err {calib['err']:.1f}px) "
           f"-> {dbg / 'calib_overlay.jpg'}")
     return calib
 
@@ -112,10 +152,11 @@ def run_ball(clip: Path, out: Path, calib: dict, fps: float):
         dfs.append(pd.read_csv(csvs[0]))
     # physics-first (docs/specs/ball-physics-first.md): consensus anchors
     # only, velocity-break segmentation, no detection-side interpolation
-    from .ball3d import consensus, reject_outliers, measure_net_bands
+    from .ball3d import weighted_track, reject_outliers, measure_net_bands
     measure_net_bands(clip, calib, fps)
     cols = ["Frame", "X", "Y", "Visibility"]
-    track = consensus(dfs[0][cols].to_numpy(float), dfs[1][cols].to_numpy(float))
+    track = weighted_track(dfs[0][cols].to_numpy(float),
+                           dfs[1][cols].to_numpy(float))
     track = reject_outliers(track)
     ball3d, n_seg, n_ok, _ = lift(track, calib, fps, segmenter="velocity")
     print(f"ball: {int((track[:, 3] > 0).mean() * 100)}% consensus anchors, "

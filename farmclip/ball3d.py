@@ -61,6 +61,30 @@ def runs(track, max_gap=3):
     yield vis[cur]
 
 
+def weighted_track(a, b, agree_px=12.0, w_single=0.35):
+    """Merge two model tracks into (N,5) [frame,x,y,vis,w].
+    Both agree within agree_px -> w=1 (position averaged); exactly one model
+    fires -> w=w_single (its position, trusted only as far as physics
+    agrees); else invisible. Physics-first amendment (2026-07-28, user call
+    after watching overlays): single-model detections carry real signal in
+    blur/far-court stretches — feed them to the fit at low weight instead
+    of discarding them; the robust loss handles the junk."""
+    n = min(len(a), len(b))
+    a, b = a[:n], b[:n]
+    t = np.zeros((n, 5))
+    t[:, 0] = a[:, 0]
+    va, vb = a[:, 3] > 0, b[:, 3] > 0
+    close = np.linalg.norm(a[:, 1:3] - b[:, 1:3], axis=1) <= agree_px
+    both = va & vb & close
+    t[both, 1:3] = (a[both, 1:3] + b[both, 1:3]) / 2
+    t[both, 3], t[both, 4] = 1, 1.0
+    only = (va | vb) & ~both
+    src = np.where(va[:, None], a[:, 1:3], b[:, 1:3])
+    t[only, 1:3] = src[only]
+    t[only, 3], t[only, 4] = 1, w_single
+    return t
+
+
 def consensus(a, b, agree_px=12.0):
     """Merge two model tracks keeping only frames where both agree.
     a, b: (N,4) [frame,x,y,vis]. Physics-first: these are the ONLY anchors;
@@ -160,17 +184,24 @@ def _project(calib, pts3d):
 
 
 def fit_segment(seg, calib, fps, rms_ok=15.0, x0=None):
-    """seg: (M,4) visible samples. Returns (frames, pts3d, rms_px, params) or None.
-    x0 optionally seeds the optimizer (soft-break continuity from prior arc)."""
+    """seg: (M,4) or (M,5 with weight col) visible samples.
+    Returns (frames, pts3d, rms_px, params) or None.
+    x0 optionally seeds the optimizer (soft-break continuity from prior arc).
+    Low-weight rows (single-model detections) pull the fit but never vote
+    on the acceptance gates — physics arbitrates what they're worth."""
     t = (seg[:, 0] - seg[0, 0]) / fps
     uv = seg[:, 1:3]
+    wts = seg[:, 4] if seg.shape[1] > 4 else np.ones(len(seg))
+    hi = wts >= 0.99
+    if not hi.any():
+        return None
 
     def model(params):
         p0, v0 = params[:3], params[3:]
         return p0[None] + v0[None] * t[:, None] + 0.5 * G[None] * t[:, None] ** 2
 
     def residuals(params):
-        return (_project(calib, model(params)) - uv).ravel()
+        return ((_project(calib, model(params)) - uv) * wts[:, None]).ravel()
 
     # bounded fit: constrain p0 to the gym volume and v0 to humanly-possible
     # speeds, so the optimizer finds the best PHYSICAL trajectory rather than
@@ -186,8 +217,8 @@ def fit_segment(seg, calib, fps, rms_ok=15.0, x0=None):
                                 [12, 10.0, 8, 45, 45, 45]))
     pts = model(out.x)
     d = np.linalg.norm(_project(calib, pts) - uv, axis=1)
-    inliers = d < 20
-    if inliers.mean() < 0.7:
+    inliers = (d < 20) & hi
+    if inliers.sum() / hi.sum() < 0.7:
         return None
     rms = float(np.sqrt(np.mean(d[inliers] ** 2)))
     if rms > rms_ok or pts[:, 1].max() > 12 \
@@ -285,6 +316,7 @@ def refine_chains(pairs, calib, fps, max_gap_s=2.5):
         f0s = [s[0, 0] for s in segs]
         uvs = [s[:, 1:3] for s in segs]
         ts = [(s[:, 0] - s[0, 0]) / fps for s in segs]
+        wls = [s[:, 4] if s.shape[1] > 4 else np.ones(len(s)) for s in segs]
         mids = [(segs[k][-1, 0] + segs[k + 1][0, 0]) / 2 for k in range(n - 1)]
 
         def pos(P, k, tt):
@@ -333,7 +365,8 @@ def refine_chains(pairs, calib, fps, max_gap_s=2.5):
                     bounce_ev.append((k, q))
 
         def resid(P):
-            r = [(_project(calib, pos(P, k, ts[k])) - uvs[k]).ravel()
+            r = [((_project(calib, pos(P, k, ts[k])) - uvs[k])
+                  * wls[k][:, None]).ravel()
                  for k in range(n)]
             for k, fm in enumerate(mids):
                 a = pos(P, k, (fm - f0s[k]) / fps)[0]
@@ -363,7 +396,8 @@ def refine_chains(pairs, calib, fps, max_gap_s=2.5):
 
         def rms_of(P):
             d = [np.minimum(np.linalg.norm(
-                _project(calib, pos(P, k, ts[k])) - uvs[k], axis=1), 20)
+                _project(calib, pos(P, k, ts[k])) - uvs[k], axis=1),
+                20)[wls[k] >= 0.99]
                 for k in range(n)]
             return np.sqrt(np.mean(np.concatenate(d) ** 2))
 
@@ -387,7 +421,26 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
     fits = []
     if segmenter == "velocity":
         # consensus anchors are sparse but trusted: let arcs span long
-        # detection gaps — the velocity-break test still guards contacts
+        # detection gaps — the velocity-break test still guards contacts.
+        # Track may carry a weight column: segmentation and all acceptance
+        # run on w=1 (consensus) rows only; low-weight single-model rows
+        # splice into each segment's span as extra pull for the fit.
+        if track.shape[1] > 4:
+            lo_rows = track[(track[:, 3] > 0) & (track[:, 4] < 0.99)]
+            track = track[(track[:, 4] >= 0.99) | (track[:, 3] == 0)]
+        else:
+            lo_rows = np.empty((0, track.shape[1]))
+
+        def augment(seg):
+            if not len(lo_rows) or seg.shape[1] <= 4:
+                return seg
+            m = (lo_rows[:, 0] > seg[0, 0]) & (lo_rows[:, 0] < seg[-1, 0]) \
+                & ~np.isin(lo_rows[:, 0], seg[:, 0])
+            if not m.any():
+                return seg
+            s2 = np.vstack([seg, lo_rows[m]])
+            return s2[np.argsort(s2[:, 0])]
+
         track = reject_static(track, fps)
         pairs = []  # (seg, fit) so merges can refit on raw anchors
         for run in runs(track, max_gap=int(fps * 0.5)):
@@ -400,6 +453,7 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
                     te = (seg[0, 0] - prev[0][0]) / fps
                     x0 = np.concatenate([p0 + v0 * te + 0.5 * G * te * te,
                                          v0 + G * te])
+                seg = augment(seg)
                 fit = fit_segment(seg, calib, fps, rms_ok, x0=x0)
                 if fit is not None:
                     pairs.append((seg, fit))

@@ -12,8 +12,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from farmclip.ball3d import (consensus, reject_outliers, lift, _project, G,
-                             measure_net_bands, _net_mid)
+from farmclip.ball3d import (weighted_track, reject_outliers, lift, _project,
+                             G, measure_net_bands, _net_mid)
 
 outdir, video, fps, name = Path(sys.argv[1]), sys.argv[2], float(sys.argv[3]), sys.argv[4]
 calib = json.loads((outdir / "calib.json").read_text())
@@ -22,9 +22,9 @@ rng = np.random.default_rng(0)
 cols = ["Frame", "X", "Y", "Visibility"]
 dfs = [pd.read_csv(list((outdir / f"ball{i}").glob("*/ball.csv"))[0])[cols]
        .to_numpy(float) for i in (0, 1)]
-track = reject_outliers(consensus(*dfs))
+track = reject_outliers(weighted_track(*dfs))
 print(f"net bands measured: {measure_net_bands(video, calib, fps)}")
-anchors = track[track[:, 3] > 0]
+anchors = track[(track[:, 3] > 0) & (track[:, 4] >= 0.99)]
 print(f"{name}: {len(anchors)} consensus anchors / {len(track)} frames")
 
 # --- full fit ---
@@ -38,9 +38,9 @@ hold = rng.random(len(track)) < 0.20
 t2 = track.copy()
 t2[hold, 3] = 0
 fit2, _, _, filled2 = lift(t2, calib, fps, segmenter="velocity")
-held = track[hold & (track[:, 3] > 0)]
+held = track[hold & (track[:, 3] > 0) & (track[:, 4] >= 0.99)]
 arc_e, fill_e = [], []
-for fr, x, y, _ in held:
+for fr, x, y, *_ in held:
     if int(fr) in fit2:
         uv = _project(calib, [fit2[int(fr)]])[0]
         (fill_e if int(fr) in filled2 else arc_e).append(
@@ -126,7 +126,7 @@ for f0, f1 in picks:
         if not all(-50 <= v[0] <= w + 50 and -50 <= v[1] <= h + 50 for v in (p, q)):
             continue
         cv2.line(img, tuple(p.astype(int)), tuple(q.astype(int)), (255, 200, 0), 2)
-    for fr, x, y, _ in anchors[(anchors[:, 0] >= f0) & (anchors[:, 0] <= f1)]:
+    for fr, x, y, *_ in anchors[(anchors[:, 0] >= f0) & (anchors[:, 0] <= f1)]:
         cv2.circle(img, (int(x), int(y)), 4, (0, 255, 0), -1)
     cv2.putText(img, f"arc f{f0}-f{f1}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
