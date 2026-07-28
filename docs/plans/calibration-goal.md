@@ -21,4 +21,16 @@ Decisions (grilled):
   background job at loop END — floor rays need the new pose anyway.
 
 Progress log (newest first):
-- (pending) iter 1: build line-alignment scorer, baseline both clips.
+- iter 1: scorer built (scripts/calib_eval.py: projected model lines vs
+  detected segments, clipped-mean + miss penalty) and RANSAC refiner
+  (scripts/calib_refine.py, scorer as judge, focal anchored). Baselines:
+  menlo court 19.3/net 14.5px, mikasa court 14.3/net 48.8px. Learned the
+  hard way: naive ICP diverges (distractor lines), focal must be bounded
+  to the ORIGINAL value (compounded 1459->2667 across reruns), median
+  score is cheatable by dropping lines. Menlo currently on a fresh
+  auto-calib + refine that is VISUALLY WORSE (squashed court) — the old
+  pose is gone (also wrong, nothing precious). Next: multi-hypothesis
+  refinement (refine EVERY calibrate() candidate frame, not just the
+  inlier-count winner), measured net band + posts as high-weight
+  constraints, then mikasa. calib_orig.json snapshots now prevent
+  focal-anchor loss.
