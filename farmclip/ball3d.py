@@ -193,8 +193,13 @@ def fit_segment(seg, calib, fps, rms_ok=15.0, x0=None):
     uv = seg[:, 1:3]
     wts = seg[:, 4] if seg.shape[1] > 4 else np.ones(len(seg))
     hi = wts >= 0.99
-    if not hi.any():
-        return None
+    lo_only = not hi.any()
+    if lo_only:
+        # no consensus anchor at all: only accept if MANY single-model
+        # detections cohere on one ballistic path — junk can't fake that
+        if len(seg) < 8:
+            return None
+        hi = np.ones(len(seg), bool)
 
     def model(params):
         p0, v0 = params[:3], params[3:]
@@ -217,10 +222,13 @@ def fit_segment(seg, calib, fps, rms_ok=15.0, x0=None):
                                 [12, 10.0, 8, 45, 45, 45]))
     pts = model(out.x)
     d = np.linalg.norm(_project(calib, pts) - uv, axis=1)
-    inliers = (d < 20) & hi
-    if inliers.sum() / hi.sum() < 0.7:
+    d_gate, frac, rms_cap = (12, 0.8, min(rms_ok, 8.0)) if lo_only \
+        else (20, 0.7, rms_ok)
+    inliers = (d < d_gate) & hi
+    if inliers.sum() / hi.sum() < frac:
         return None
     rms = float(np.sqrt(np.mean(d[inliers] ** 2)))
+    rms_ok = rms_cap
     if rms > rms_ok or pts[:, 1].max() > 12 \
             or np.abs(pts[:, 0]).max() > 15 or np.abs(pts[:, 2]).max() > 10:
         return None
@@ -471,6 +479,19 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
                                      rms_ok=rms_ok):
                 seg = run[np.isin(run[:, 0], fit[0])]
                 pairs.append((seg, fit))
+        # single-model rescue: dark stretches are often FULL of one-model
+        # detections (fast/blurred legs — census showed 20-49 per gap).
+        # Let them form arcs under the strict lo-only gate in fit_segment.
+        if len(lo_rows):
+            spans = [(sa[0, 0], sa[-1, 0]) for sa, _ in pairs]
+            free = lo_rows[[not any(a <= f <= b for a, b in spans)
+                            for f in lo_rows[:, 0]]]
+            for run in runs(free, max_gap=int(fps * 0.5)):
+                for fit in grow_segments(run, calib, fps, min_len=8,
+                                         rms_ok=8.0):
+                    seg = run[np.isin(run[:, 0], fit[0])]
+                    pairs.append((seg, fit))
+            pairs.sort(key=lambda sf: sf[0][0, 0])
         # leftover anchors too few to fit alone ride along as fit-less
         # fragments; the merge pass below can absorb them into real arcs
         used = {int(f) for sa, _ in pairs for f in sa[:, 0]}
@@ -553,19 +574,31 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
 
     filled = set()
     fitted_anchor_frames = {int(f) for fit in fits for f in fit[0]}
-    anchor_frames = track[track[:, 3] > 0][:, 0].astype(int)
+    vis_rows = track[track[:, 3] > 0]
+    anchor_frames = vis_rows[:, 0].astype(int)
+    anchor_xy = {int(r[0]): r[1:3] for r in vis_rows}
     for i, fit in enumerate(fits):
         a_end = int(fit[0][-1])
         nxt = fits[i + 1] if i + 1 < len(fits) else None
         b_start = int(nxt[0][0]) if nxt is not None else None
         joined = False
-        # consensus anchors inside the gap that NO arc could explain =
-        # a ball that isn't flying (held, serve prep) = rally boundary
+        # SLOW consensus anchors inside the gap that no arc could explain =
+        # a ball that isn't flying (held, serve prep) = rally boundary.
+        # FAST unfitted anchors are the opposite: spike-leg evidence (too
+        # few frames to fit) — they must not veto the fill.
         stray = 0
         if nxt is not None:
             in_gap = (anchor_frames > a_end) & (anchor_frames < b_start)
-            stray = sum(1 for f in anchor_frames[in_gap]
-                        if f not in fitted_anchor_frames)
+            for f in anchor_frames[in_gap]:
+                if int(f) in fitted_anchor_frames:
+                    continue
+                nb = [g for g in (f - 2, f - 1, f + 1, f + 2) if g in anchor_xy]
+                if nb:
+                    v = max(np.linalg.norm(anchor_xy[int(f)] - anchor_xy[g])
+                            / (abs(int(f) - g) / fps) for g in nb)
+                    if v > 500:  # px/s: flying, not held
+                        continue
+                stray += 1
         if nxt is not None and stray < 3 and 1 < b_start - a_end <= fps * 2.5:
             frs = np.arange(a_end + 1, b_start)
             gap_s = len(frs) / fps
@@ -593,7 +626,10 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
                 vb = (pb - pa - 0.5 * G * T * T) / T if T else None
                 # the connecting flight must be humanly plausible — a fast
                 # flat parabola across the gym is a teleport in disguise
-                if vb is not None and np.linalg.norm(vb) <= 20.0:
+                # speed gate scales with brevity: a spike leg is FAST and
+                # SHORT (25-35 m/s for <0.6s); fast AND long is a teleport
+                v_max = 35.0 if T <= 0.6 else 20.0
+                if vb is not None and np.linalg.norm(vb) <= v_max:
                     pts = np.empty((len(frs), 3))
                     for j, f in enumerate(frs):
                         if j <= ja:
