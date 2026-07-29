@@ -21,6 +21,12 @@ Decisions (grilled):
   background job at loop END — floor rays need the new pose anyway.
 
 Progress log (newest first):
+- 2026-07-29 overnight batch (full-stack, manual calib, fine-tuned
+  players): mikasa ball 94% frame coverage (809 arcs, 11.4k filled);
+  menlo players avg 11.1/12 on court EVERY frame (was 1-28%); mikasa
+  players avg 3.4/4. Both scenes rebuilt. In parallel the user trained
+  yolo11s-pose court keypoints and wired _calibrate_ai into cli — future
+  videos calibrate automatically from the keypoint model.
 - iter 1: scorer built (scripts/calib_eval.py: projected model lines vs
   detected segments, clipped-mean + miss penalty) and RANSAC refiner
   (scripts/calib_refine.py, scorer as judge, focal anchored). Baselines:
