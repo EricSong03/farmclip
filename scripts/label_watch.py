@@ -13,7 +13,7 @@ from pathlib import Path
 import cv2
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from farmclip.calibrate import draw_overlay, lm_polish, solve
+from farmclip.calibrate import draw_overlay, solve_web
 
 WEB = Path(__file__).parent.parent / "out/webimgs"
 OVL = WEB / "overlays"
@@ -39,12 +39,13 @@ while True:
             continue
         h, w = frame.shape[:2]
         try:
-            calib = lm_polish(solve(ann, w, h), ann)
-            out = draw_overlay(frame, calib, ann)
+            calib, net_h = solve_web(ann, w, h)
+            out = draw_overlay(frame, calib, ann, net_h=net_h)
             e = calib["err"]
             color = (0, 200, 0) if e < 15 else (0, 165, 255) if e < 40 else (0, 0, 255)
             verdict = "good" if e < 15 else "check worst points" if e < 40 else "BAD - relabel"
-            cv2.putText(out, f"err {e:.1f}px - {verdict}", (12, 34),
+            nh = f" | net ~{net_h:.2f}m" if net_h else ""
+            cv2.putText(out, f"floor err {e:.1f}px - {verdict}{nh}", (12, 34),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
         except Exception as ex:
             out = frame.copy()

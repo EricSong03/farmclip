@@ -71,7 +71,12 @@ def lm_polish(calib: dict, points_2d: dict) -> dict:
         return (proj.reshape(-1, 2) - img).ravel()
 
     p0 = np.concatenate([calib["rvec"], calib["tvec"], [calib["f"]]])
-    sol = least_squares(resid, p0, method="lm", max_nfev=5000)
+    # f bounded: unbounded LM escapes to degenerate quasi-orthographic optima
+    # (f ~ 1e10) on weakly-conditioned point sets, e.g. single web images
+    lo = [-np.inf] * 6 + [0.3 * w]
+    hi = [np.inf] * 6 + [3.5 * w]
+    p0[6] = np.clip(p0[6], lo[6], hi[6])
+    sol = least_squares(resid, p0, method="trf", bounds=(lo, hi), max_nfev=5000)
     new_err = float(np.sqrt(np.mean(np.sum(resid(sol.x).reshape(-1, 2) ** 2, axis=1))))
     if new_err >= calib["err"]:
         return calib
@@ -136,6 +141,63 @@ def solve_auto(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, dict]:
     return lm_polish(calib, used), used
 
 
+def _height_at(calib: dict, uv, z0: float) -> float | None:
+    """World y of the sideline point (0, y, ±z0) projecting nearest uv.
+    Side-agnostic: the click's _left/_right may not match world Z sign."""
+    ys = np.arange(0.5, 4.0, 0.002)
+    best = (1e9, None)
+    for z in (z0, -z0):
+        pts = np.stack([np.zeros_like(ys), ys, np.full_like(ys, z)], 1)
+        proj = project(calib, pts)
+        d = np.hypot(proj[:, 0] - uv[0], proj[:, 1] - uv[1])
+        i = int(np.argmin(d))
+        if d[i] < best[0]:
+            best = (float(d[i]), float(ys[i]))
+    return best[1] if best[0] < 80 else None
+
+
+def solve_web(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, float | None]:
+    """Floor-anchored solve for single images (labeling feedback / web data).
+
+    Net height varies by venue (men 2.43, women 2.24, rec anything), so the
+    fixed-height net points poison a joint solve. Pose comes from FLOOR clicks
+    only (planar IPPE with mirror rejection + bounded LM), then net height is
+    MEASURED from the clicked net_top / antenna points. Returns (calib, net_h).
+    """
+    floor = {k: v for k, v in points_2d.items()
+             if k in KEYPOINTS and KEYPOINTS[k][1] == 0}
+    if len(floor) < 5:  # not enough floor: fall back to joint solve
+        return lm_polish(solve(points_2d, img_w, img_h), points_2d), None
+    from .hypothesis import _solve_points  # deferred: avoids import cycle
+    # clicked "_left" may be image-left, i.e. the world mirror — a mirrored
+    # floor only fits via an upside-down camera (rejected in _solve_points),
+    # so try both assignments and keep the upright one
+    cands = []
+    for fl in (floor, _swap_lr(floor)):
+        names = list(fl)
+        c = _solve_points(np.array([KEYPOINTS[n] for n in names], float),
+                          np.array([fl[n] for n in names], float),
+                          img_w, img_h, f_range=(0.4, 3.0))
+        if c is not None:
+            cands.append((c["err"], c, fl))
+    if cands:
+        _, calib, floor = min(cands, key=lambda x: x[0])
+        calib["per_point_err"] = {}
+        calib = lm_polish(calib, floor)
+    else:
+        calib = lm_polish(solve(floor, img_w, img_h), floor)
+    ys = [y - off
+          for n, off in (("net_top_left", 0.0), ("net_top_right", 0.0),
+                         ("antenna_tip_left", 0.8), ("antenna_tip_right", 0.8))
+          if n in points_2d
+          and (y := _height_at(calib, np.asarray(points_2d[n], float),
+                               KEYPOINTS[n][2])) is not None]
+    net_h = float(np.median(ys)) if ys else None
+    if net_h is not None:
+        calib["net_h_est"] = round(net_h, 3)
+    return calib, net_h
+
+
 def calib_matrices(calib: dict):
     K = np.array(
         [[calib["f"], 0, calib["img_w"] / 2], [0, calib["f"], calib["img_h"] / 2], [0, 0, 1]]
@@ -179,10 +241,15 @@ def consistent_names(ann: dict, calib: dict, max_px: float = 200.0) -> dict:
     return out
 
 
-def draw_overlay(frame, calib: dict, annotations: dict | None = None):
-    """Court lines (cyan), keypoints (red +), annotations (green x) on a copy of frame."""
+def draw_overlay(frame, calib: dict, annotations: dict | None = None,
+                 net_h: float | None = None):
+    """Court lines (cyan), keypoints (red +), annotations (green x) on a copy of frame.
+    net_h: measured net height — shifts everything above the floor by
+    (net_h - regulation 2.43) so the net band/antennas draw where they really are."""
     out = frame.copy()
-    for a, b in LINES:
+    dy = 0.0 if net_h is None else net_h - 2.43
+    shift = lambda p: (p[0], p[1] + dy, p[2]) if p[1] > 0 else p
+    for a, b in [(shift(a), shift(b)) for a, b in LINES]:
         seg3d = np.linspace(a, b, 20)  # sample so long lines curve correctly under perspective? (pinhole: straight, but keeps clipping simple)
         pts = project(calib, seg3d)
         for i in range(len(pts) - 1):
@@ -190,7 +257,7 @@ def draw_overlay(frame, calib: dict, annotations: dict | None = None):
             if np.all(np.isfinite(p)) and np.all(np.isfinite(q)):
                 cv2.line(out, tuple(p.astype(int)), tuple(q.astype(int)), (255, 255, 0), 2)
     for name, (x, y, z) in KEYPOINTS.items():
-        (u, v), = project(calib, [(x, y, z)])
+        (u, v), = project(calib, [(x, y + dy if y > 0 else y, z)])
         if 0 <= u < out.shape[1] and 0 <= v < out.shape[0]:
             cv2.drawMarker(out, (int(u), int(v)), (0, 0, 255), cv2.MARKER_CROSS, 12, 2)
             cv2.putText(out, name, (int(u) + 4, int(v) - 4), 0, 0.35, (0, 0, 255), 1)

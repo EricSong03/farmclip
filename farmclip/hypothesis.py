@@ -47,6 +47,12 @@ def _solve_points(obj, img, w, h, f_range=(0.5, 1.6)):
             C = (-R.T @ tvec).ravel()
             if C[1] <= 0:  # camera below floor = mirror ghost
                 continue
+            # second ghost: camera above floor but orientation flipped —
+            # world +y must go UP on screen (smaller v)
+            ud, _ = cv2.projectPoints(
+                np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]), rvec, tvec, K, None)
+            if ud.reshape(-1, 2)[1, 1] >= ud.reshape(-1, 2)[0, 1]:
+                continue
             proj, _ = cv2.projectPoints(np.asarray(obj, float), rvec, tvec, K, None)
             err = float(np.sqrt(np.mean(np.sum((proj.reshape(-1, 2) - img) ** 2, axis=1))))
             if best is None or err < best["err"]:

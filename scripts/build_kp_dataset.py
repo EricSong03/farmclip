@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from farmclip.calibrate import consistent_names, solve
+from farmclip.calibrate import consistent_names, solve_web
 from farmclip.court import KEYPOINTS
 from farmclip.video import video_info, read_frames
 from calib_eval import score_frame
@@ -116,9 +116,9 @@ for lp in sorted((webdir / "labels").glob("*.json")) if (webdir / "labels").exis
     frame = cv2.imread(str(imgp))
     h, w = frame.shape[:2]
     try:
-        calib = solve(ann, w, h)
-        if calib["err"] > 60:
-            print(f"[web] {lp.stem}: solve err {calib['err']:.0f}px — rejecting (bad labels?)")
+        calib, _net_h = solve_web(ann, w, h)
+        if calib["err"] > 30:  # floor-only err: tighter gate than the old joint solve
+            print(f"[web] {lp.stem}: floor err {calib['err']:.0f}px — rejecting (bad labels?)")
             continue
         ann = consistent_names(ann, calib)
     except Exception as e:
