@@ -28,7 +28,7 @@ def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
                   model: Path) -> dict | None:
     """AI keypoint path: per-keypoint median over ~10 frames -> solve + polish."""
     from .kp_detect import detect_keypoints
-    from .calibrate import solve, lm_polish, draw_overlay
+    from .calibrate import solve_auto, draw_overlay
 
     hits, ref = {}, None
     for i, t, frame in video.read_frames(str(clip), step=max(1, int(n_frames // 10))):
@@ -42,7 +42,7 @@ def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
         print(f"ai_kp: only {len(pts)} stable keypoints (<5)")
         return None
     try:
-        calib = lm_polish(solve(pts, w, h), pts)
+        calib, pts = solve_auto(pts, w, h)
     except Exception as e:
         print(f"ai_kp: solve failed ({e})")
         return None

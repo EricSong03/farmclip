@@ -12,7 +12,7 @@ from pathlib import Path
 import cv2
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from farmclip.calibrate import solve, draw_overlay
+from farmclip.calibrate import solve, draw_overlay, lm_polish
 
 outdir = Path(sys.argv[1])
 ann = json.loads((outdir / "annotations.json").read_text())
@@ -56,34 +56,10 @@ for label, a in [("as-clicked", ann),
 
 err, label, calib, used = min(cands, key=lambda x: x[0])
 
-# continuous LM polish over (rvec, tvec, f): solve()'s focal grid is coarse
-# (0.05*w steps) and solvePnP alone leaves tens of px on the table
-import numpy as np
-from scipy.optimize import least_squares
-from farmclip.court import KEYPOINTS
-
-names = [k for k in used if k in KEYPOINTS]
-obj = np.array([KEYPOINTS[k] for k in names], float)
-img = np.array([used[k] for k in names], float)
-
-
-def resid(p):
-    rvec, tvec, f = p[:3], p[3:6], p[6]
-    K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]])
-    proj, _ = cv2.projectPoints(obj, rvec, tvec, K, None)
-    return (proj.reshape(-1, 2) - img).ravel()
-
-
-p0 = np.concatenate([calib["rvec"], calib["tvec"], [calib["f"]]])
-sol = least_squares(resid, p0, method="lm", max_nfev=5000)
-new_err = float(np.sqrt(np.mean(np.sum(resid(sol.x).reshape(-1, 2) ** 2, axis=1))))
-if new_err < err:
-    calib = dict(calib, rvec=sol.x[:3].tolist(), tvec=sol.x[3:6].tolist(),
-                 f=float(sol.x[6]), err=new_err)
-    d = np.linalg.norm(resid(sol.x).reshape(-1, 2), axis=1)
-    calib["per_point_err"] = {k: float(e) for k, e in zip(names, d)}
-    err = new_err
-    print(f"LM polish: err -> {new_err:.1f}px, f {calib['f']:.0f}")
+polished = lm_polish(calib, used)
+if polished["err"] < err:
+    calib, err = polished, polished["err"]
+    print(f"LM polish: err -> {err:.1f}px, f {calib['f']:.0f}")
 (outdir / "calib.json").write_text(json.dumps(calib, indent=1))
 cv2.imwrite(str(outdir / "debug" / "calib_overlay.jpg"),
             draw_overlay(frame, calib, used))

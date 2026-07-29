@@ -81,6 +81,61 @@ def lm_polish(calib: dict, points_2d: dict) -> dict:
                 per_point_err={k: float(e) for k, e in zip(names, d)})
 
 
+_NET_GROUP = ("antenna_tip", "net_top", "post_top", "post_base")
+
+
+def _swap_lr(a: dict, only: str | None = None) -> dict:
+    def sw(k):
+        if only is not None and not k.startswith(only):
+            return k
+        if k.endswith("_left"):
+            return k[:-5] + "_right"
+        if k.endswith("_right"):
+            return k[:-6] + "_left"
+        return k
+    return {sw(k): v for k, v in a.items()}
+
+
+def solve_auto(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, dict]:
+    """solve() for AI-detected keypoints, tolerant of left/right label drift.
+
+    The fine-tuned model inherits per-clip naming drift from its training
+    annotations: individual pairs (e.g. net_top) come out mirrored. Two-step
+    fix: (1) majority-vote the image side of '_left' within each group (net
+    rig vs floor) and flip minority pairs; (2) solve the 4 group-level swap
+    variants (as in scripts/calib_solve.py), lowest reprojection error wins.
+    Returns (polished calib, the point dict actually used).
+    """
+    pts = dict(points_2d)
+    for grp in (True, False):  # True = net-rig pairs, False = floor pairs
+        sides = {}
+        for k, (u, _) in pts.items():
+            if k.endswith("_left") and (k[:-5] in _NET_GROUP) == grp:
+                r = pts.get(k[:-5] + "_right")
+                if r is not None:
+                    sides[k[:-5]] = np.sign(u - r[0])
+        maj = np.sign(sum(sides.values())) or 1
+        for pre, s in sides.items():
+            if s != maj:
+                pts[pre + "_left"], pts[pre + "_right"] = \
+                    pts[pre + "_right"], pts[pre + "_left"]
+
+    grp_swap = dict(pts)
+    for pre in _NET_GROUP:
+        grp_swap = _swap_lr(grp_swap, only=pre)
+    cands = []
+    for a in (pts, _swap_lr(pts), grp_swap, _swap_lr(grp_swap)):
+        try:
+            c = solve(a, img_w, img_h)
+            cands.append((c["err"], c, a))
+        except (ValueError, RuntimeError, cv2.error):
+            pass
+    if not cands:
+        raise RuntimeError("solve failed for all left/right variants")
+    _, calib, used = min(cands, key=lambda x: x[0])
+    return lm_polish(calib, used), used
+
+
 def calib_matrices(calib: dict):
     K = np.array(
         [[calib["f"], 0, calib["img_w"] / 2], [0, calib["f"], calib["img_h"] / 2], [0, 0, 1]]
