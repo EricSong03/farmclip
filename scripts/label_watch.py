@@ -11,9 +11,21 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from farmclip.calibrate import draw_overlay, solve_web
+from farmclip.court import KEYPOINTS
+
+
+def floor_spread_ok(ann):
+    """False when floor clicks are too few or near-collinear (pose underdetermined)."""
+    pts = np.array([v for k, v in ann.items()
+                    if k in KEYPOINTS and KEYPOINTS[k][1] == 0], float)
+    if len(pts) < 6:
+        return False
+    _, s, _ = np.linalg.svd(pts - pts.mean(0))
+    return s[1] / s[0] > 0.08
 
 WEB = Path(__file__).parent.parent / "out/webimgs"
 OVL = WEB / "overlays"
@@ -45,6 +57,9 @@ while True:
             color = (0, 200, 0) if e < 15 else (0, 165, 255) if e < 40 else (0, 0, 255)
             verdict = "good" if e < 15 else "check worst points" if e < 40 else "BAD - relabel"
             nh = f" | net ~{net_h:.2f}m" if net_h else ""
+            if not floor_spread_ok(ann):
+                color = (0, 165, 255)
+                verdict = "UNDERDETERMINED - click more floor pts (both sides!)"
             cv2.putText(out, f"floor err {e:.1f}px - {verdict}{nh}", (12, 34),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
         except Exception as ex:

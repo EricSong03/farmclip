@@ -186,15 +186,68 @@ def solve_web(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, float | No
         calib = lm_polish(calib, floor)
     else:
         calib = lm_polish(solve(floor, img_w, img_h), floor)
-    ys = [y - off
-          for n, off in (("net_top_left", 0.0), ("net_top_right", 0.0),
-                         ("antenna_tip_left", 0.8), ("antenna_tip_right", 0.8))
-          if n in points_2d
-          and (y := _height_at(calib, np.asarray(points_2d[n], float),
-                               KEYPOINTS[n][2])) is not None]
-    net_h = float(np.median(ys)) if ys else None
-    if net_h is not None:
-        calib["net_h_est"] = round(net_h, 3)
+    # joint refine with net-rig clicks: floor anchors the pose, but for
+    # low/ground cameras the floor is near edge-on and underdetermines
+    # height/tilt — the net verticals are essential constraints there.
+    # Net height stays FREE (venues vary: men 2.43, women 2.24, rec anything).
+    net = {}
+    for n, off in (("net_top_left", 0.0), ("net_top_right", 0.0),
+                   ("antenna_tip_left", 0.8), ("antenna_tip_right", 0.8)):
+        if n in points_2d:
+            uv = np.asarray(points_2d[n], float)
+            z0 = KEYPOINTS[n][2]
+            # side assignment by nearest projection under the floor-only pose
+            da = min(np.hypot(*(project(calib, [(0.0, y, z0)])[0] - uv))
+                     for y in (2.0, 2.24, 2.43))
+            db = min(np.hypot(*(project(calib, [(0.0, y, -z0)])[0] - uv))
+                     for y in (2.0, 2.24, 2.43))
+            net[n] = (uv, z0 if da <= db else -z0, off)
+    net_h = None
+    if net:
+        from scipy.optimize import least_squares
+        fl_obj = np.array([KEYPOINTS[k] for k in floor], float)
+        fl_img = np.array([floor[k] for k in floor], float)
+        w_, h_ = img_w, img_h
+
+        def make_resid(nd):
+            obj_net = [(z, off) for _, z, off in nd.values()]
+            img = np.vstack([fl_img] + [uv for uv, _, _ in nd.values()])
+
+            def resid(p):
+                rvec, tvec, f, nh = p[:3], p[3:6], p[6], p[7]
+                K = np.array([[f, 0, w_ / 2], [0, f, h_ / 2], [0, 0, 1]])
+                obj = np.vstack([fl_obj] + [[(0.0, nh + off, z)] for z, off in obj_net])
+                proj, _ = cv2.projectPoints(obj, rvec, tvec, K, None)
+                return (proj.reshape(-1, 2) - img).ravel()
+            return resid
+
+        lo = [-np.inf] * 6 + [0.3 * w_, 1.8]
+        hi = [np.inf] * 6 + [3.5 * w_, 2.7]
+        # multi-start: degenerate floor-only inits (ground-level cameras see
+        # the floor edge-on) strand a single TRF run in the wrong basin; the
+        # net side assignment can also be wrong under a bad init.
+        variants = [net, {k: (uv, -z, off) for k, (uv, z, off) in net.items()}]
+        best = None
+        for nd in variants:
+            resid = make_resid(nd)
+            for f0 in {np.clip(calib["f"], 0.3 * w_, 3.5 * w_), 0.8 * w_, 1.5 * w_, 2.5 * w_}:
+                p0 = np.concatenate([calib["rvec"], calib["tvec"], [f0], [2.43]])
+                try:
+                    sol = least_squares(resid, p0, method="trf",
+                                        bounds=(lo, hi), max_nfev=3000)
+                except Exception:
+                    continue
+                cost = float(np.sqrt(np.mean(sol.fun ** 2)))
+                if best is None or cost < best[0]:
+                    best = (cost, sol.x.copy(), resid)
+        if best is not None:
+            _, x, resid = best
+            net_h = float(x[7])
+            fl_res = resid(x).reshape(-1, 2)[:len(fl_obj)]
+            calib = dict(calib, rvec=x[:3].tolist(), tvec=x[3:6].tolist(),
+                         f=float(x[6]),
+                         err=float(np.sqrt(np.mean(np.sum(fl_res ** 2, axis=1)))),
+                         net_h_est=round(net_h, 3))
     return calib, net_h
 
 
