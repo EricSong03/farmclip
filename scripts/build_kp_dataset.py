@@ -19,8 +19,12 @@ from farmclip.video import video_info, read_frames
 from calib_eval import score_frame
 
 ROOT = Path(__file__).parent.parent
-RUNS = [("menlo", ROOT / "out", ROOT / "videos/clip.mp4"),
-        ("mikasa", ROOT / "out/mikasa", ROOT / "videos/mikasa.mp4")]
+if (ROOT / "out/runs.json").exists():
+    RUNS = [(r["name"], ROOT / r["dir"], ROOT / r["video"])
+            for r in json.loads((ROOT / "out/runs.json").read_text())]
+else:  # fallback: pre-runs.json layout
+    RUNS = [("menlo", ROOT / "out", ROOT / "videos/clip.mp4"),
+            ("mikasa", ROOT / "out/mikasa", ROOT / "videos/mikasa.mp4")]
 OUT = ROOT / "out/finetune/court"
 NAMES = list(KEYPOINTS)  # canonical 18-slot order
 
@@ -54,19 +58,29 @@ for sub in ("images/train", "images/val", "labels/train", "labels/val"):
 
 kept_all, n_kept = [], 0
 for run, outdir, video in RUNS:
+    if not (outdir / "annotations.json").exists():
+        print(f"[{run}] no annotations.json — skipping (label it in calib.html)")
+        continue
     ann = json.loads((outdir / "annotations.json").read_text())
-    calib = json.loads((outdir / "calib.json").read_text())
-    ref = cv2.imread(str(outdir / "debug" / "ref_frame.jpg"))
-    ref_med, _ = court_median(ref, calib)
-    print(f"[{run}] ref median {ref_med}")
+    calib = None
+    if (outdir / "calib.json").exists():
+        calib = json.loads((outdir / "calib.json").read_text())
+        ref = cv2.imread(str(outdir / "debug" / "ref_frame.jpg"))
+        ref_med, _ = court_median(ref, calib)
+        print(f"[{run}] ref median {ref_med}")
+    else:
+        print(f"[{run}] no calib.json — drift gate off, keeping all sampled frames")
     step = max(1, video_info(video)["frames"] // 40)
     kept = dropped = 0
     for i, t, frame in read_frames(video, step=step):
-        med, n = court_median(frame, calib)
-        if ref_med:  # ponytail: 2x-ref drift gate; tune if a clip pans
-            ok = med is not None and med <= 2 * ref_med
+        if calib is None:
+            ok = True
         else:
-            ok = n >= 4
+            med, n = court_median(frame, calib)
+            if ref_med:  # ponytail: 2x-ref drift gate; tune if a clip pans
+                ok = med is not None and med <= 2 * ref_med
+            else:
+                ok = n >= 4
         if not ok:
             dropped += 1
             continue

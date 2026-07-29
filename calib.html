@@ -32,8 +32,8 @@
 </div>
 
 <script>
-// ponytail: runs hardcoded, same convention as label.html RUNS
-const RUNS = [
+// fallback if out/runs.json missing (stage_clip.py writes it)
+let RUNS = [
   { name: "menlo",  dir: "out",        frame: "debug/ref_frame.jpg" },
   { name: "mikasa", dir: "out/mikasa", frame: "debug/ref_frame.jpg" },
 ];
@@ -58,7 +58,12 @@ async function getHandle(root, path, opts) {
 
 $("open").onclick = async () => {
   dir = await showDirectoryPicker({ mode: "readwrite" });
+  try {
+    const f = await (await getHandle(dir, "out/runs.json")).getFile();
+    RUNS = JSON.parse(await f.text()).map(r => ({ name: r.name, dir: r.dir, frame: r.ref }));
+  } catch {} // no runs.json — keep hardcoded fallback
   $("run").innerHTML = RUNS.map((r, i) => `<option value="${i}">${r.name}</option>`).join("");
+  $("saved").textContent = `${RUNS.length} runs`;
   loadRun(0);
 };
 $("run").onchange = e => loadRun(+e.target.value);
