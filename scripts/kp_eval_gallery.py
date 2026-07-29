@@ -62,6 +62,7 @@ for run, video, ann_path in RUNS:
                 if kc[k] >= CONF:
                     preds[name] = (float(xy[k][0]), float(xy[k][1]), float(kc[k]))
         errs = []
+        n_swapped = 0
         for name in NAMES:
             per_kpt[name]["frames"] += 1
             gt = ann.get(name)
@@ -74,6 +75,15 @@ for run, video, ann_path in RUNS:
                 cv2.drawMarker(frame, g, (0, 0, 255), cv2.MARKER_CROSS, 12, 1)
             if p and gt:
                 e = float(np.hypot(p[0] - gt[0], p[1] - gt[1]))
+                # side-agnostic: a name-swapped L/R pair is fixed downstream by
+                # solve_auto, so score against the better of gt[name]/gt[mirror]
+                mirror = name.replace("_left", "_R").replace("_right", "_left").replace("_R", "_right")
+                gm = ann.get(mirror)
+                if gm is not None:
+                    em = float(np.hypot(p[0] - gm[0], p[1] - gm[1]))
+                    if em < e:
+                        e = em
+                        n_swapped += 1
                 errs.append(e)
                 per_kpt[name]["errs"].append(e)
                 cv2.line(frame, (int(p[0]), int(p[1])), (int(gt[0]), int(gt[1])),
@@ -88,7 +98,8 @@ for run, video, ann_path in RUNS:
         errs_run += errs
         ndet_run.append(len(preds))
         mean_e = f"{np.mean(errs):.1f}" if errs else "-"
-        cards.append((fname, f"{fname} | mean err {mean_e} px | {len(preds)} kpts"))
+        swap_note = f" | {n_swapped} L/R-swapped" if n_swapped else ""
+        cards.append((fname, f"{fname} | mean err {mean_e} px | {len(preds)} kpts{swap_note}"))
     cap.release()
     run_stats[run] = {
         "mean": float(np.mean(errs_run)) if errs_run else None,
@@ -101,6 +112,34 @@ for run, video, ann_path in RUNS:
           f"{run_stats[run]['matched']} matched, "
           f"{run_stats[run]['det_avg']:.1f} kpts/frame"
           if errs_run else f"[{run}] no matched keypoints")
+
+# unseen external images (no GT): pred overlays only, for generalization check
+EXT = ROOT / "out/finetune/court/testimgs"
+ext_cards = []
+for img_path in sorted(EXT.glob("*.jpg")) + sorted(EXT.glob("*.png")) if EXT.exists() else []:
+    frame = cv2.imread(str(img_path))
+    if frame is None:
+        continue
+    r = model.predict(frame, imgsz=640, verbose=False)[0]
+    confs = []
+    if r.keypoints is not None and len(r.keypoints) > 0:
+        bi = int(np.argmax(r.boxes.conf.cpu().numpy())) if len(r.boxes) else 0
+        xy = r.keypoints.xy.cpu().numpy()[bi]
+        kc = (r.keypoints.conf.cpu().numpy()[bi]
+              if r.keypoints.conf is not None else np.ones(len(NAMES)))
+        for k, name in enumerate(NAMES):
+            if kc[k] >= CONF:
+                confs.append(float(kc[k]))
+                u, v = int(xy[k][0]), int(xy[k][1])
+                cv2.circle(frame, (u, v), 3, (0, 255, 0), -1)
+                cv2.putText(frame, f"{name} {kc[k]:.2f}", (u + 4, v - 4),
+                            cv2.FONT_HERSHEY_PLAIN, 0.8, (0, 255, 0), 1)
+    fname = f"ext_{img_path.stem}.jpg"
+    cv2.imwrite(str(OUT / fname), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    mc = f"{np.mean(confs):.2f}" if confs else "-"
+    ext_cards.append((fname, f"{img_path.name} | {len(confs)} kpts >={CONF} | mean conf {mc}"))
+if ext_cards:
+    print(f"[ext] {len(ext_cards)} unseen images -> ext_*.jpg overlays")
 
 # worst-3 names by median error (global; per-run split not worth it yet)
 by_med = sorted(((n, float(np.median(d["errs"]))) for n, d in per_kpt.items() if d["errs"]),
@@ -125,6 +164,12 @@ for n in NAMES:
     rate = d["det"] / d["frames"] if d["frames"] else 0
     kpt_rows += (f"<tr><td>{n}</td><td>{med}</td>"
                  f"<td>{rate:.0%}</td><td>{conf}</td></tr>")
+
+ext_imgs = "".join(
+    f'<a href="{f}"><figure><img src="{f}" loading="lazy">'
+    f"<figcaption>{html.escape(c)}</figcaption></figure></a>" for f, c in ext_cards)
+ext_section = (f'<h2>Unseen courts (generalization)</h2><div class="grid">{ext_imgs}</div>'
+               if ext_cards else "")
 
 imgs = "".join(
     f'<a href="{f}"><figure><img src="{f}" loading="lazy">'
@@ -151,6 +196,7 @@ a{{color:inherit;text-decoration:none}}
 <table><tr><th>name</th><th>median err px</th><th>det rate</th><th>median conf</th></tr>
 {kpt_rows}</table>
 <h2>Frames</h2><div class="grid">{imgs}</div>
+{ext_section}
 """, encoding="utf-8")
 
 print((OUT / "index.html").resolve())
