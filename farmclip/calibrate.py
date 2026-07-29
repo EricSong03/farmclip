@@ -53,6 +53,34 @@ def solve(points_2d: dict[str, tuple[float, float]], img_w: int, img_h: int) -> 
     }
 
 
+def lm_polish(calib: dict, points_2d: dict) -> dict:
+    """Continuous LM refine over (rvec, tvec, f): solve()'s focal grid is coarse
+    (0.05*w steps) and solvePnP alone leaves tens of px on the table.
+    Returns polished calib, or the input unchanged if LM doesn't improve."""
+    from scipy.optimize import least_squares
+
+    names = [k for k in points_2d if k in KEYPOINTS]
+    obj = np.array([KEYPOINTS[k] for k in names], float)
+    img = np.array([points_2d[k] for k in names], float)
+    w, h = calib["img_w"], calib["img_h"]
+
+    def resid(p):
+        rvec, tvec, f = p[:3], p[3:6], p[6]
+        K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]])
+        proj, _ = cv2.projectPoints(obj, rvec, tvec, K, None)
+        return (proj.reshape(-1, 2) - img).ravel()
+
+    p0 = np.concatenate([calib["rvec"], calib["tvec"], [calib["f"]]])
+    sol = least_squares(resid, p0, method="lm", max_nfev=5000)
+    new_err = float(np.sqrt(np.mean(np.sum(resid(sol.x).reshape(-1, 2) ** 2, axis=1))))
+    if new_err >= calib["err"]:
+        return calib
+    d = np.linalg.norm(resid(sol.x).reshape(-1, 2), axis=1)
+    return dict(calib, rvec=sol.x[:3].tolist(), tvec=sol.x[3:6].tolist(),
+                f=float(sol.x[6]), err=new_err,
+                per_point_err={k: float(e) for k, e in zip(names, d)})
+
+
 def calib_matrices(calib: dict):
     K = np.array(
         [[calib["f"], 0, calib["img_w"] / 2], [0, calib["f"], calib["img_h"] / 2], [0, 0, 1]]
@@ -65,6 +93,35 @@ def project(calib: dict, pts3d) -> np.ndarray:
     K, rvec, tvec = calib_matrices(calib)
     proj, _ = cv2.projectPoints(np.asarray(pts3d, dtype=np.float64), rvec, tvec, K, None)
     return proj.reshape(-1, 2)
+
+
+def consistent_names(ann: dict, calib: dict, max_px: float = 200.0) -> dict:
+    """Reassign clicked-point names to the nearest calib-projected keypoint.
+
+    Clicks are precise but _left/_right naming conventions drifted between
+    clips; the solved calib is convention-correct, so names come from
+    projection, positions stay human. Greedy 1-1 by distance; clicks with no
+    projection within max_px are dropped (printed).
+    """
+    names = list(KEYPOINTS)
+    proj = project(calib, np.array([KEYPOINTS[n] for n in names], np.float32))
+    clicks = list(ann.items())
+    pairs = sorted(
+        (float(np.hypot(uv[0] - p[0], uv[1] - p[1])), ci, pi)
+        for ci, (_, uv) in enumerate(clicks) for pi, p in enumerate(proj))
+    used_c, used_p, out = set(), set(), {}
+    for d, ci, pi in pairs:
+        if ci in used_c or pi in used_p or d > max_px:
+            continue
+        used_c.add(ci), used_p.add(pi)
+        cn, uv = clicks[ci]
+        if names[pi] != cn:
+            print(f"  rename {cn} -> {names[pi]} ({d:.0f}px)")
+        out[names[pi]] = uv
+    for ci, (cn, _) in enumerate(clicks):
+        if ci not in used_c:
+            print(f"  drop {cn} (no projection within {max_px:.0f}px)")
+    return out
 
 
 def draw_overlay(frame, calib: dict, annotations: dict | None = None):

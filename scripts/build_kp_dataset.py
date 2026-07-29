@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from farmclip.calibrate import consistent_names
 from farmclip.court import KEYPOINTS
 from farmclip.video import video_info, read_frames
 from calib_eval import score_frame
@@ -33,34 +34,6 @@ def court_median(img, calib):
     """(median court-line err, n court matches); net excluded."""
     errs = [v for k, v in score_frame(img, calib).items() if k != "net"]
     return (float(np.median(errs)) if errs else None, len(errs))
-
-
-def consistent_names(ann, calib):
-    """Reassign click names to nearest calib-projected keypoint.
-
-    Clicks are precise but their _left/_right naming conventions drifted
-    between clips (see 216bee4); the solved calib is convention-correct, so
-    names come from projection, positions stay human.
-    """
-    from farmclip.calibrate import project
-    proj = project(calib, np.array([KEYPOINTS[n] for n in NAMES], np.float32))
-    clicks = list(ann.items())
-    pairs = sorted(
-        (float(np.hypot(uv[0] - p[0], uv[1] - p[1])), ci, pi)
-        for ci, (_, uv) in enumerate(clicks) for pi, p in enumerate(proj))
-    used_c, used_p, out = set(), set(), {}
-    for d, ci, pi in pairs:
-        if ci in used_c or pi in used_p or d > 200:
-            continue
-        used_c.add(ci), used_p.add(pi)
-        cn, uv = clicks[ci]
-        if NAMES[pi] != cn:
-            print(f"  rename {cn} -> {NAMES[pi]} ({d:.0f}px)")
-        out[NAMES[pi]] = uv
-    for ci, (cn, _) in enumerate(clicks):
-        if ci not in used_c:
-            print(f"  drop {cn} (no projection within 200px)")
-    return out
 
 
 def label_line(ann, w, h):
