@@ -45,8 +45,14 @@ const POINTS = [
   "center_left", "center_right",
   "net_top_left", "net_top_right",
   "antenna_tip_left", "antenna_tip_right",
-  "post_top_left", "post_top_right", "post_base_left", "post_base_right",
+  // ponytail: post_* dropped — post geometry varies per venue, labels were noise
 ];
+const HINTS = {
+  net_top_left: "= BOTTOM of the left antenna (net top band at sideline)",
+  net_top_right: "= BOTTOM of the right antenna",
+  antenna_tip_left: "very top of the left antenna rod",
+  antenna_tip_right: "very top of the right antenna rod",
+};
 const $ = id => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d");
 let dir = null, runCfg = null, img = new Image(), ann = {}, order = [], oi = 0;
@@ -169,7 +175,8 @@ function draw() {
     ctx.fillStyle = "#4caf50"; ctx.font = "12px monospace";
     ctx.fillText(k, x + 6, y - 6);
   }
-  $("cur").textContent = oi < order.length ? order[oi] :
+  $("cur").textContent = oi < order.length ?
+    order[oi] + (HINTS[order[oi]] ? "  (" + HINTS[order[oi]] + ")" : "") :
     "DONE — all points handled";
 }
 

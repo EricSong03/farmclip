@@ -33,6 +33,7 @@ while True:
             ann = json.loads(lp.read_text())
         except (json.JSONDecodeError, OSError):  # mid-write
             continue
+        ann = {k: v for k, v in ann.items() if not k.startswith("post_")}
         frame = cv2.imread(str(img_path))
         if frame is None or len(ann) < 5:
             continue

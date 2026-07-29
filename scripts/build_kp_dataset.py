@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from farmclip.calibrate import consistent_names
+from farmclip.calibrate import consistent_names, solve
 from farmclip.court import KEYPOINTS
 from farmclip.video import video_info, read_frames
 from calib_eval import score_frame
@@ -28,6 +28,11 @@ else:  # fallback: pre-runs.json layout
             ("mikasa", ROOT / "out/mikasa", ROOT / "videos/mikasa.mp4")]
 OUT = ROOT / "out/finetune/court"
 NAMES = list(KEYPOINTS)  # canonical 18-slot order
+
+
+def drop_posts(a):
+    """ponytail: post geometry varies per venue — excluded from training/solve."""
+    return {k: v for k, v in a.items() if not k.startswith("post_")}
 
 
 def court_median(img, calib):
@@ -62,7 +67,7 @@ for run, outdir, video in RUNS:
     if not (outdir / "annotations.json").exists():
         print(f"[{run}] no annotations.json — skipping (label it in calib.html)")
         continue
-    ann = json.loads((outdir / "annotations.json").read_text())
+    ann = drop_posts(json.loads((outdir / "annotations.json").read_text()))
     calib = None
     if (outdir / "calib.json").exists():
         calib = json.loads((outdir / "calib.json").read_text())
@@ -96,8 +101,40 @@ for run, outdir, video in RUNS:
         kept += 1
     print(f"[{run}] kept {kept} dropped {dropped}")
 
+# web-scraped stills labeled in calib.html image-batch mode
+webdir = ROOT / "out/webimgs"
+web_kept = 0
+for lp in sorted((webdir / "labels").glob("*.json")) if (webdir / "labels").exists() else []:
+    imgp = next((p for e in (".jpg", ".jpeg", ".png") if (p := webdir / (lp.stem + e)).exists()), None)
+    if imgp is None:
+        print(f"[web] {lp.stem}: no image — skipping")
+        continue
+    ann = drop_posts(json.loads(lp.read_text()))
+    if len(ann) < 5:
+        print(f"[web] {lp.stem}: only {len(ann)} points — skipping")
+        continue
+    frame = cv2.imread(str(imgp))
+    h, w = frame.shape[:2]
+    try:
+        calib = solve(ann, w, h)
+        if calib["err"] > 60:
+            print(f"[web] {lp.stem}: solve err {calib['err']:.0f}px — rejecting (bad labels?)")
+            continue
+        ann = consistent_names(ann, calib)
+    except Exception as e:
+        print(f"[web] {lp.stem}: solve failed ({e}) — keeping points as clicked")
+    split = "val" if n_kept % 5 == 4 else "train"
+    n_kept += 1
+    name = f"web_{lp.stem}"
+    cv2.imwrite(str(OUT / "images" / split / f"{name}.jpg"), frame)
+    (OUT / "labels" / split / f"{name}.txt").write_text(label_line(ann, w, h) + "\n")
+    kept_all.append((split, name, ann))
+    web_kept += 1
+if web_kept:
+    print(f"[web] kept {web_kept}")
+
 train = sum(1 for s, *_ in kept_all if s == "train")
-print(f"total: {train} train / {len(kept_all) - train} val")
+print(f"total: {train} train / {len(kept_all) - train} val ({web_kept} web)")
 
 # flip_idx: horizontal flip swaps _left <-> _right
 flip_idx = [NAMES.index(n.replace("_left", "_R").replace("_right", "_left").replace("_R", "_right"))
