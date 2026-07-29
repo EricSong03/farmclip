@@ -285,6 +285,17 @@ def _net_mid(calib, frame=None):
     return calib["_netuv"]
 
 
+def _backproject_at_dist(calib, u, v, dist):
+    """3D point along the pixel ray at a given distance from the camera."""
+    K = np.array([[calib["f"], 0, calib["img_w"] / 2],
+                  [0, calib["f"], calib["img_h"] / 2], [0, 0, 1]])
+    R, _ = cv2.Rodrigues(np.array(calib["rvec"], float))
+    tvec = np.array(calib["tvec"], float).ravel()
+    C = -R.T @ tvec
+    d = R.T @ np.linalg.solve(K, np.array([u, v, 1.0]))
+    return C + dist * d / np.linalg.norm(d)
+
+
 def _ray_floor(calib, u, v):
     """Backproject pixel (u,v) and intersect with the floor plane y=0."""
     K = np.array([[calib["f"], 0, calib["img_w"] / 2],
@@ -441,9 +452,13 @@ def lift_with_streaks(track, calib, fps, video, max_gap_s=4.0):
         # can't be one parabola, hence per-endpoint legs.
         rng = np.random.default_rng(int(a))
         end_uv = _project(calib, [out[a], out[b]])
+        cam_c = _backproject_at_dist(calib, calib["img_w"] / 2,
+                                     calib["img_h"] / 2, 0.0)
         best = None  # (n_inliers, inlier_rows, anchor_row)
-        for anchor_f, anchor_uv in ((a, end_uv[0]), (b, end_uv[1])):
+        for anchor_f, anchor_uv, anchor_3d in ((a, end_uv[0], out[a]),
+                                               (b, end_uv[1], out[b])):
             anchor = np.array([[anchor_f, *anchor_uv, 1, 1.0]])
+            depth = float(np.linalg.norm(np.array(anchor_3d) - cam_c))
             for _ in range(40):
                 pick = cand[rng.choice(len(cand), 2, replace=False)]
                 if len({int(r[0]) for r in pick} | {anchor_f}) < 3:
@@ -451,7 +466,18 @@ def lift_with_streaks(track, calib, fps, video, max_gap_s=4.0):
                 seg = np.vstack([anchor, pick])
                 seg = seg[np.argsort(seg[:, 0])]
                 seg[:, 4] = 1.0  # minimal set: all trusted for the probe fit
-                fit = fit_segment(seg, calib, fps, rms_ok=25.0)
+                # seed from what the pixels say: candidates backprojected at
+                # the anchor's depth give position AND spike-grade velocity —
+                # the default 3 m/s seed can't climb to 30 m/s legs
+                p3 = [_backproject_at_dist(calib, r[1], r[2], depth)
+                      for r in pick]
+                dt = (pick[1, 0] - pick[0, 0]) / fps
+                v_seed = (p3[1] - p3[0]) / dt if dt else np.zeros(3)
+                t0 = (seg[0, 0] - pick[0, 0]) / fps
+                p_seed = p3[0] + v_seed * t0 if seg[0, 0] != anchor_f \
+                    else np.array(anchor_3d)
+                x0 = np.concatenate([p_seed, v_seed])
+                fit = fit_segment(seg, calib, fps, rms_ok=25.0, x0=x0)
                 if fit is None:
                     continue
                 p0, v0 = fit[3][:3], fit[3][3:]
@@ -612,7 +638,10 @@ def lift(track, calib, fps, min_len=5, rms_ok=10.0, segmenter="greedy"):
             # when the offender is also short (junk signature)
             if jump > 1.0 + 35 * gap / fps:
                 short_i = i if len(a[0]) < len(b[0]) else i + 1
-                if len(fits[short_i][0]) < 10:
+                # junk = short AND badly fit. A short arc with pristine rms
+                # is a spike leg whose 3D depth merely disagrees with its
+                # neighbor — culling those was eating every fast leg.
+                if len(fits[short_i][0]) < 10 and fits[short_i][2] > 5.0:
                     del fits[short_i]
                     changed = True
                     break
