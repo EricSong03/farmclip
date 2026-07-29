@@ -35,6 +35,34 @@ def court_median(img, calib):
     return (float(np.median(errs)) if errs else None, len(errs))
 
 
+def consistent_names(ann, calib):
+    """Reassign click names to nearest calib-projected keypoint.
+
+    Clicks are precise but their _left/_right naming conventions drifted
+    between clips (see 216bee4); the solved calib is convention-correct, so
+    names come from projection, positions stay human.
+    """
+    from farmclip.calibrate import project
+    proj = project(calib, np.array([KEYPOINTS[n] for n in NAMES], np.float32))
+    clicks = list(ann.items())
+    pairs = sorted(
+        (float(np.hypot(uv[0] - p[0], uv[1] - p[1])), ci, pi)
+        for ci, (_, uv) in enumerate(clicks) for pi, p in enumerate(proj))
+    used_c, used_p, out = set(), set(), {}
+    for d, ci, pi in pairs:
+        if ci in used_c or pi in used_p or d > 200:
+            continue
+        used_c.add(ci), used_p.add(pi)
+        cn, uv = clicks[ci]
+        if NAMES[pi] != cn:
+            print(f"  rename {cn} -> {NAMES[pi]} ({d:.0f}px)")
+        out[NAMES[pi]] = uv
+    for ci, (cn, _) in enumerate(clicks):
+        if ci not in used_c:
+            print(f"  drop {cn} (no projection within 200px)")
+    return out
+
+
 def label_line(ann, w, h):
     """YOLO pose row: class cx cy bw bh + 18x (x y v), normalized."""
     kps, vis_uv = [], []
@@ -65,6 +93,7 @@ for run, outdir, video in RUNS:
     calib = None
     if (outdir / "calib.json").exists():
         calib = json.loads((outdir / "calib.json").read_text())
+        ann = consistent_names(ann, calib)
         ref = cv2.imread(str(outdir / "debug" / "ref_frame.jpg"))
         ref_med, _ = court_median(ref, calib)
         print(f"[{run}] ref median {ref_med}")
