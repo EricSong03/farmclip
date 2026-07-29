@@ -20,6 +20,8 @@
   <button id="skip">skip (not visible)</button>
   <button id="undo">undo</button>
   <select id="relabel"><option value="">relabel…</option></select>
+  <button id="next" style="display:none">next image (n)</button>
+  <button id="bad" style="display:none">bad image (delete) (d)</button>
   <span id="saved"></span>
 </div>
 <canvas id="cv"></canvas>
@@ -48,6 +50,7 @@ const POINTS = [
 const $ = id => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d");
 let dir = null, runCfg = null, img = new Image(), ann = {}, order = [], oi = 0;
+let webMode = false, webQueue = [], webIdx = 0;
 
 async function getHandle(root, path, opts) {
   const parts = path.split("/");
@@ -63,12 +66,81 @@ $("open").onclick = async () => {
     RUNS = JSON.parse(await f.text()).map(r => ({ name: r.name, dir: r.dir, frame: r.ref }));
   } catch {} // no runs.json — keep hardcoded fallback
   $("run").innerHTML = RUNS.map((r, i) => `<option value="${i}">${r.name}</option>`).join("");
+  try {  // out/webimgs/ present => offer image-batch mode
+    const wd = await webDir();
+    const labeled = new Set();
+    try {
+      for await (const n of (await wd.getDirectoryHandle("labels")).keys())
+        labeled.add(n.replace(/\.json$/, ""));
+    } catch {}
+    webQueue = [];
+    let nImg = 0;
+    for await (const [n, h] of wd.entries())
+      if (h.kind === "file" && /\.(jpe?g|png)$/i.test(n)) {
+        nImg++;
+        if (!labeled.has(stem(n))) webQueue.push(n);
+      }
+    webQueue.sort();
+    if (nImg) {
+      const opt = document.createElement("option");
+      opt.value = "web"; opt.textContent = `web images (${webQueue.length} unlabeled)`;
+      $("run").appendChild(opt);
+    }
+  } catch {} // no out/webimgs — video runs only
   $("saved").textContent = `${RUNS.length} runs`;
   loadRun(0);
 };
-$("run").onchange = e => loadRun(+e.target.value);
+$("run").onchange = e => e.target.value === "web" ? loadWeb(0) : loadRun(+e.target.value);
+
+const stem = n => n.replace(/\.[^.]+$/, "");
+const webDir = async () =>
+  (await dir.getDirectoryHandle("out")).getDirectoryHandle("webimgs");
+
+async function loadWeb(k) {
+  webMode = true; webIdx = k;
+  $("next").style.display = $("bad").style.display = "";
+  ann = {}; order = POINTS.slice(); oi = 0;
+  if (k >= webQueue.length) {
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    $("cur").textContent = "DONE — no more web images";
+    $("saved").textContent = `${webQueue.length} / ${webQueue.length} unlabeled`;
+    return;
+  }
+  let file;
+  try {
+    file = await (await getHandle(dir, `out/webimgs/${webQueue[k]}`)).getFile();
+  } catch { // file vanished (renumbered/deleted outside) — drop and continue
+    webQueue.splice(k, 1);
+    return loadWeb(k);
+  }
+  img.src = URL.createObjectURL(file);
+  img.onload = draw;
+  $("saved").textContent = `${k + 1} / ${webQueue.length} unlabeled`;
+}
+
+$("next").onclick = () => { if (webMode) loadWeb(webIdx + 1); };
+$("bad").onclick = async () => {
+  if (!webMode || webIdx >= webQueue.length) return;
+  const name = webQueue[webIdx];
+  const wd = await webDir();
+  await wd.removeEntry(name);
+  try { await (await wd.getDirectoryHandle("labels")).removeEntry(stem(name) + ".json"); } catch {}
+  const fh = await wd.getFileHandle("deleted.txt", { create: true });
+  const old = await (await fh.getFile()).text();
+  const w = await fh.createWritable();
+  await w.write(old + name + "\n"); await w.close();
+  webQueue.splice(webIdx, 1);
+  loadWeb(webIdx);
+};
+document.addEventListener("keydown", e => {
+  if (!webMode || /SELECT|INPUT/.test(e.target.tagName)) return;
+  if (e.key === "n") $("next").onclick();
+  if (e.key === "d") $("bad").onclick();
+});
 
 async function loadRun(i) {
+  webMode = false;
+  $("next").style.display = $("bad").style.display = "none";
   runCfg = RUNS[i];
   ann = {};
   try {
@@ -102,15 +174,20 @@ function draw() {
 async function save() {
   const out = {};
   for (const [k, v] of Object.entries(ann)) if (v && v[0] !== null) out[k] = v;
-  const fh = await getHandle(dir, `${runCfg.dir}/annotations.json`, { create: true });
+  const path = webMode
+    ? `out/webimgs/labels/${stem(webQueue[webIdx])}.json`
+    : `${runCfg.dir}/annotations.json`;
+  const fh = await getHandle(dir, path, { create: true });
   const w = await fh.createWritable();
   await w.write(JSON.stringify(out, null, 1)); await w.close();
   $("saved").textContent = "saved ✓";
-  setTimeout(() => { $("saved").textContent = ""; }, 1000);
+  setTimeout(() => {
+    $("saved").textContent = webMode ? `${webIdx + 1} / ${webQueue.length} unlabeled` : "";
+  }, 1000);
 }
 
 cv.addEventListener("click", e => {
-  if (oi >= order.length) return;
+  if (oi >= order.length || (webMode && webIdx >= webQueue.length)) return;
   const r = cv.getBoundingClientRect();
   ann[order[oi]] = [
     Math.round((e.clientX - r.left) * cv.width / r.width * 10) / 10,
