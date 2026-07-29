@@ -98,6 +98,7 @@ const webDir = async () =>
 
 async function loadWeb(k) {
   webMode = true; webIdx = k;
+  clearInterval(pollTimer); pollStem = null;
   $("next").style.display = $("bad").style.display = "";
   ann = {}; order = POINTS.slice(); oi = 0;
   if (k >= webQueue.length) {
@@ -140,6 +141,7 @@ document.addEventListener("keydown", e => {
 
 async function loadRun(i) {
   webMode = false;
+  clearInterval(pollTimer); pollStem = null;
   $("next").style.display = $("bad").style.display = "none";
   runCfg = RUNS[i];
   ann = {};
@@ -171,6 +173,25 @@ function draw() {
     "DONE — all points handled";
 }
 
+let pollTimer = null, pollStem = null;
+function pollOverlay(s, since) {
+  clearInterval(pollTimer);
+  pollStem = s;
+  let tries = 0;
+  pollTimer = setInterval(async () => {
+    if (!webMode || pollStem !== s || ++tries > 20) return clearInterval(pollTimer);
+    try {
+      const f = await (await getHandle(dir, `out/webimgs/overlays/${s}.jpg`)).getFile();
+      if (f.lastModified >= since) {
+        clearInterval(pollTimer);
+        img.src = URL.createObjectURL(f);
+        img.onload = draw;
+        $("saved").textContent = "overlay ✓ (err stamped top-left)";
+      }
+    } catch {} // watcher hasn't rendered yet
+  }, 1000);
+}
+
 async function save() {
   const out = {};
   for (const [k, v] of Object.entries(ann)) if (v && v[0] !== null) out[k] = v;
@@ -184,6 +205,8 @@ async function save() {
   setTimeout(() => {
     $("saved").textContent = webMode ? `${webIdx + 1} / ${webQueue.length} unlabeled` : "";
   }, 1000);
+  if (webMode && Object.keys(out).length >= 5)
+    pollOverlay(stem(webQueue[webIdx]), Date.now() - 3000);
 }
 
 cv.addEventListener("click", e => {
