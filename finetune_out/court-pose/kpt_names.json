@@ -1,0 +1,20 @@
+[
+ "corner_far_left",
+ "corner_far_right",
+ "corner_near_left",
+ "corner_near_right",
+ "attack_far_left",
+ "attack_far_right",
+ "attack_near_left",
+ "attack_near_right",
+ "center_left",
+ "center_right",
+ "net_top_left",
+ "net_top_right",
+ "antenna_tip_left",
+ "antenna_tip_right",
+ "post_top_left",
+ "post_top_right",
+ "post_base_left",
+ "post_base_right"
+]
