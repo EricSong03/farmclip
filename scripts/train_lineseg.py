@@ -133,7 +133,8 @@ def main():
         model.eval()
         torch.onnx.export(model, torch.zeros(1, 3, a.imgsz[1], a.imgsz[0]), a.export,
                           input_names=["image"], output_names=["logits"],
-                          dynamic_axes={"image": {0: "b"}, "logits": {0: "b"}}, opset_version=17)
+                          dynamic_axes={"image": {0: "b"}, "logits": {0: "b"}},
+                          opset_version=17, dynamo=False)  # dynamo path needs onnxscript
         print(f"exported {ck.name} -> {a.export}")
         return
 
