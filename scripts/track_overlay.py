@@ -65,7 +65,7 @@ while True:
         break
     c = track.get(f, last)  # step>1: hold nearest earlier tracked pose
     last = c
-    img = draw_overlay(img, c)
+    img = draw_overlay(img, c, net_h=calib0.get("net_h_est"))
     cv2.putText(img, f"f{f} err {c['err']:.1f}px n{c.get('n', 0)}",
                 (10, h - 14), 0, 0.6, (0, 255, 255), 2)
     vw.write(img)
