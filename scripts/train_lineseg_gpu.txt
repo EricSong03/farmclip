@@ -1,0 +1,4 @@
+python -m uv run python scripts/train_lineseg.py --device cuda --batch 8 --epochs 200
+
+(run from the repo root on the GPU box after copying out/finetune/lineseg over;
+when done, bring back finetune_out/lineseg/best.pt)
