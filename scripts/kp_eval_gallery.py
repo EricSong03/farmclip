@@ -51,7 +51,7 @@ for run, video, ann_path in RUNS:
         ok, frame = cap.read()
         if not ok:
             continue
-        r = model.predict(frame, imgsz=640, verbose=False)[0]
+        r = model.predict(frame, imgsz=1280, verbose=False)[0]
         preds = {}  # name -> (u, v, conf), best-box detection only
         if r.keypoints is not None and len(r.keypoints) > 0:
             bi = int(np.argmax(r.boxes.conf.cpu().numpy())) if len(r.boxes) else 0
@@ -120,7 +120,7 @@ for img_path in sorted(EXT.glob("*.jpg")) + sorted(EXT.glob("*.png")) if EXT.exi
     frame = cv2.imread(str(img_path))
     if frame is None:
         continue
-    r = model.predict(frame, imgsz=640, verbose=False)[0]
+    r = model.predict(frame, imgsz=1280, verbose=False)[0]
     confs = []
     if r.keypoints is not None and len(r.keypoints) > 0:
         bi = int(np.argmax(r.boxes.conf.cpu().numpy())) if len(r.boxes) else 0
