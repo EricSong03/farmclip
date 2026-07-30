@@ -16,6 +16,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from farmclip.calibrate import calib_matrices, project, solve_web
 from farmclip.court import HL, HW, ATTACK, NET_H
+from farmclip.lineseg import CLASSES, NET_EXT, class_lines
 from farmclip.video import video_info, read_frames
 from calib_eval import score_frame
 
@@ -23,25 +24,6 @@ ROOT = Path(__file__).parent.parent
 RUNS = [(r["name"], ROOT / r["dir"], ROOT / r["video"])
         for r in json.loads((ROOT / "out/runs.json").read_text())]
 OUT = ROOT / "out/finetune/lineseg"
-CLASSES = ["bg", "sideline_left", "sideline_right", "endline_far", "endline_near",
-           "attack_far", "attack_near", "center_line", "net_band"]
-NET_EXT = 0.9  # net band overhangs the sidelines to the posts-ish
-
-
-def class_lines(net_h):
-    """class id -> 3D segment. Left = z=-HW as seen from +X (court.py convention)."""
-    return {
-        1: ((-HL, 0, -HW), (+HL, 0, -HW)),
-        2: ((-HL, 0, +HW), (+HL, 0, +HW)),
-        3: ((-HL, 0, -HW), (-HL, 0, +HW)),
-        4: ((+HL, 0, -HW), (+HL, 0, +HW)),
-        5: ((-ATTACK, 0, -HW), (-ATTACK, 0, +HW)),
-        6: ((+ATTACK, 0, -HW), (+ATTACK, 0, +HW)),
-        7: ((0, 0, -HW), (0, 0, +HW)),
-        8: ((0, net_h, -HW - NET_EXT), (0, net_h, +HW + NET_EXT)),
-    }
-
-
 def render_mask(calib, w, h, net_h):
     """uint8 (h,w) class-index map; segments behind camera / far offscreen clipped."""
     mask = np.zeros((h, w), np.uint8)

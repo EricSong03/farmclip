@@ -25,7 +25,7 @@ VBALLNET_MODELS = [
 
 
 def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
-                  model: Path) -> dict | None:
+                  model: Path, frames_out: list | None = None) -> dict | None:
     """AI keypoint path: per-keypoint median over ~10 frames -> click-grade solve.
 
     Same math as the manual labeling path (solve_web): pose anchored on floor
@@ -41,6 +41,8 @@ def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
     for i, t, frame in video.read_frames(str(clip), step=max(1, int(n_frames // 10))):
         if ref is None:
             ref = (i, frame)
+        if frames_out is not None:
+            frames_out.append(frame)
         for name, uv in detect_keypoints(frame, str(model)).items():
             hits.setdefault(name, []).append(uv)
     # median across frames kills per-frame jitter/occlusion; >=3 sightings only
@@ -64,7 +66,9 @@ def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
         return None
     if calib["err"] > 12:  # good anchors land <10; hallucinations fit ~20-25 "consistently"
         print(f"ai_kp: floor err {calib['err']:.1f}px > 12 — rejecting AI anchor")
-        return None
+        # still worth returning: too loose to ship, good enough to seed the
+        # line solve, which re-fits the pose against dense line evidence
+        return dict(calib, rejected=True)
     calib["method"] = "ai_kp"
     calib["ref_frame"] = ref[0]
     (out / "calib.json").write_text(json.dumps(calib, indent=1))
@@ -77,8 +81,48 @@ def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
     return calib
 
 
+def _calibrate_lineseg(out: Path, frames: list, init: dict,
+                       model: Path, max_err: float = 6.0) -> dict | None:
+    """Line-segmentation refine of an existing calib (init from keypoints/hough).
+
+    The UNet segments the 8 named court lines; the pose is re-fit against every
+    line pixel instead of a handful of corners. Init only has to be roughly
+    right — this has no global search, but dense line evidence pulls a sloppy
+    keypoint pose (or a rejected one) onto the actual paint.
+    """
+    from .lineseg import detect_lines, draw_mask, solve_lines
+    from .calibrate import draw_overlay
+
+    pix = detect_lines(frames, str(model))
+    if len(pix) < 3:  # 2 lines can't fix both court directions
+        print(f"lineseg: only {len(pix)} line classes segmented (<3)")
+        return None
+    try:
+        calib, med = solve_lines(pix, init, net_h=init.get("net_h_est") or 2.43)
+    except Exception as e:
+        print(f"lineseg: solve failed ({e})")
+        return None
+    if med > max_err:
+        print(f"lineseg: {med:.1f}px median line error > {max_err} — keeping init")
+        return None
+    calib.pop("rejected", None)
+    if "net_h_est" not in calib and init.get("net_h_est"):
+        calib["net_h_est"] = init["net_h_est"]  # lineseg couldn't see it, keypoints could
+    calib["ref_frame"] = init.get("ref_frame")
+    (out / "calib.json").write_text(json.dumps(calib, indent=1))
+    dbg = out / "debug"
+    dbg.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(dbg / "calib_overlay.jpg"),
+                draw_overlay(frames[0], calib, net_h=calib.get("net_h_est")))
+    cv2.imwrite(str(dbg / "lineseg_mask.jpg"), draw_mask(frames[0], pix))
+    print(f"calibrated via lineseg: {len(pix)} lines, {med:.1f}px median "
+          f"(from {init.get('method', 'init')} @ {init['err']:.1f}px) "
+          f"-> {dbg / 'calib_overlay.jpg'}")
+    return calib
+
+
 def calibrate(clip: Path, out: Path):
-    """Auto-calibration: AI keypoints if the model exists, else Hough search."""
+    """Auto-calibration: AI keypoints -> line-segmentation refine, else Hough."""
     from .lines import detect_segments
     from .hypothesis import search
     from .refine_lsq import polish
@@ -89,11 +133,16 @@ def calibrate(clip: Path, out: Path):
     info_v = video.video_info(clip)
     w, h = info_v["width"], info_v["height"]
     kp_model = Path("finetune_out/yolo11s-court.onnx")
+    seg_model = Path("finetune_out/lineseg/lineseg.onnx")
+    calib, frames = None, []
     if kp_model.exists():
-        calib = _calibrate_ai(clip, out, w, h, info_v["frames"], kp_model)
-        if calib is not None:
-            return calib
-        print("ai_kp path failed, falling back to hough search")
+        calib = _calibrate_ai(clip, out, w, h, info_v["frames"], kp_model,
+                              frames_out=frames)
+    if calib is not None and seg_model.exists():
+        calib = _calibrate_lineseg(out, frames, calib, seg_model) or calib
+    if calib is not None and not calib.get("rejected"):
+        return calib
+    print("ai calibration failed, falling back to hough search")
     step = max(1, int(info_v["frames"] // 40))
     best = None
     for i, t, frame in video.read_frames(str(clip), step=step):
@@ -143,6 +192,10 @@ def calibrate(clip: Path, out: Path):
     _, calib, ref_frame, frame = best
     calib["method"] = "hough"
     calib["ref_frame"] = ref_frame
+    if seg_model.exists():  # dense lines beat 4 hough segments when they agree
+        calib = _calibrate_lineseg(out, [frame], calib, seg_model) or calib
+        if calib["method"] == "lineseg":
+            return calib
     (out / "calib.json").write_text(json.dumps(calib, indent=1))
     dbg = out / "debug"
     dbg.mkdir(parents=True, exist_ok=True)
