@@ -6,6 +6,7 @@ stale, solve the camera from the clicks and write the wireframe overlay to
 out/webimgs/overlays/<stem>.jpg with the reprojection error stamped on it.
 """
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -68,5 +69,8 @@ while True:
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
             print(f"{lp.stem}: solve failed ({ex})")
         cv2.imwrite(str(dst), out, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        # label mtimes can sit in the future (browser-written) — pin the
+        # overlay's mtime to the label's so the staleness check terminates
+        os.utime(dst, (lp.stat().st_mtime, lp.stat().st_mtime))
         print(f"{lp.stem}: overlay written")
     time.sleep(1)
