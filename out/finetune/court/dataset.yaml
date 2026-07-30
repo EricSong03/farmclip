@@ -1,4 +1,4 @@
-path: C:/Users/ericy/projects/farmclip/out/finetune/court
+path: /home/erics11/farmclip/out/finetune/court
 train: images/train
 val: images/val
 kpt_shape: [18, 3]

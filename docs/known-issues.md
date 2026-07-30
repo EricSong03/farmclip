@@ -67,6 +67,38 @@ menlo 40, mikasa 27, web-scraped 27). Runs in `runs/pose/`; eval via
   corner_near_left at 42px). Since kpt-confidence cannot flag outliers, bounded
   worst-case matters far more than best-case median for solvePnP.
 
+## GPU training round 2 (lineseg v2 + keypoints v5, 2026-07-30)
+
+Both trained on the refreshed ~30-venue datasets (lineseg 180/50,
+keypoints 197/59 -- slightly larger than docs/icrn-training.md states).
+
+- **v2 lineseg UNet works.** 200 epochs, batch 8, 960x544, 3.35M params.
+  Best val loss 0.3981 at epoch 163; all 8 non-bg classes land at 0.64-0.72
+  IoU. `net_band` reached 0.68 and did *not* lag the floor lines the way the
+  handoff predicted. Val plateaued ~epoch 160, so 200 epochs was about right
+  (cosine LR had annealed by then) -- extending to 400 is not obviously worth it.
+- **`epochs=300 patience=50` is wrong for keypoints too -- confirmed twice.**
+  v5's best epoch was **393** (mAP50-95(P) 0.8228) and it never early-stopped
+  across the full 700. The 300/50 recipe in `scripts/train_court.sh` and in
+  docs/icrn-training.md would have cut it off before the optimum. Use 700/250.
+- **v5 beats v4 by a wide margin on the new 59-image val split**
+  (median / mean / p90 px, via `scripts/court_kp_val.py`):
+  v4 77.8 / 158.9 / 412.5 (PCK@0.02 30.5%, 518 kpts matched);
+  **v5 17.7 / 47.9 / 55.0 (PCK@0.02 86.0%, 630 matched)**. The real gap is
+  wider still: 7 of those 59 val images were in v4's *training* set.
+- **v5's weak spot is `corner_near_right`** (452px median, but only 11 GT
+  instances). Corners generally remain the worst group; the mid-court and net
+  keypoints are all at 11-20px median. Same rule as before -- exclude by index,
+  not by confidence.
+- **`project=finetune_out` does not land in `finetune_out/`.** Ultralytics
+  resolves `project` relative to its own `runs_dir`, so results went to
+  `runs/pose/finetune_out/court-pose-v5/`. The committed copy under
+  `finetune_out/court-pose-v5/` is a manual copy. Pass an absolute path if you
+  want the doc's layout.
+- **`scripts/train_lineseg.py` has no `--resume` and writes no CSV.** Per-epoch
+  val loss and IoU exist only on stdout -- tee it. The committed
+  `finetune_out/lineseg/train_log.txt` is that capture.
+
 ## Footage / calibration
 
 - **Court corners rarely visible.** Typical PoV is low, behind the end line — the "click 4 corners" flow in the current stub is unusable on real footage. Superseded by named-keypoint spec; stub UI not yet updated.
