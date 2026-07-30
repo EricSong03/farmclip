@@ -26,9 +26,16 @@ VBALLNET_MODELS = [
 
 def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
                   model: Path) -> dict | None:
-    """AI keypoint path: per-keypoint median over ~10 frames -> solve + polish."""
+    """AI keypoint path: per-keypoint median over ~10 frames -> click-grade solve.
+
+    Same math as the manual labeling path (solve_web): pose anchored on floor
+    points, net height MEASURED from net/antenna detections, multi-start.
+    Rejects hallucinated detections: worst floor point dropped iteratively
+    while floor err > 15px, and the whole calib refused if it stays > 25px —
+    better no calib (hough/manual fallback) than a confidently wrong one.
+    """
     from .kp_detect import detect_keypoints
-    from .calibrate import solve_auto, draw_overlay
+    from .calibrate import KEYPOINTS, draw_overlay, solve_web
 
     hits, ref = {}, None
     for i, t, frame in video.read_frames(str(clip), step=max(1, int(n_frames // 10))):
@@ -42,16 +49,29 @@ def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
         print(f"ai_kp: only {len(pts)} stable keypoints (<5)")
         return None
     try:
-        calib, pts = solve_auto(pts, w, h)
+        calib, net_h = solve_web(pts, w, h)
+        while calib["err"] > 15:
+            floor = [n for n in calib.get("per_point_err", {}) if KEYPOINTS[n][1] == 0]
+            if len(floor) <= 6:
+                break
+            worst = max(floor, key=calib["per_point_err"].get)
+            pts.pop(worst, None)
+            print(f"ai_kp: dropping outlier {worst} "
+                  f"({calib['per_point_err'][worst]:.0f}px), re-solving")
+            calib, net_h = solve_web(pts, w, h)
     except Exception as e:
         print(f"ai_kp: solve failed ({e})")
+        return None
+    if calib["err"] > 12:  # good anchors land <10; hallucinations fit ~20-25 "consistently"
+        print(f"ai_kp: floor err {calib['err']:.1f}px > 12 — rejecting AI anchor")
         return None
     calib["method"] = "ai_kp"
     calib["ref_frame"] = ref[0]
     (out / "calib.json").write_text(json.dumps(calib, indent=1))
     dbg = out / "debug"
     dbg.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(dbg / "calib_overlay.jpg"), draw_overlay(ref[1], calib, pts))
+    cv2.imwrite(str(dbg / "calib_overlay.jpg"),
+                draw_overlay(ref[1], calib, pts, net_h=calib.get("net_h_est")))
     print(f"calibrated via ai_kp: {len(pts)} keypoints, err {calib['err']:.1f}px "
           f"-> {dbg / 'calib_overlay.jpg'}")
     return calib
@@ -135,7 +155,7 @@ def calibrate(clip: Path, out: Path):
 def run_ball(clip: Path, out: Path, calib: dict, fps: float):
     """Dual VballNet union 2D -> ballistic 3D. Returns {frame: [x,y,z]}."""
     import pandas as pd
-    from .ball3d import lift
+    from .ball3d import lift_with_streaks
 
     dfs = []
     for i, model in enumerate(VBALLNET_MODELS):
@@ -158,7 +178,7 @@ def run_ball(clip: Path, out: Path, calib: dict, fps: float):
     track = weighted_track(dfs[0][cols].to_numpy(float),
                            dfs[1][cols].to_numpy(float))
     track = reject_outliers(track)
-    ball3d, n_seg, n_ok, _ = lift(track, calib, fps, segmenter="velocity")
+    ball3d, n_seg, n_ok, _ = lift_with_streaks(track, calib, fps, clip)
     print(f"ball: {int((track[:, 3] > 0).mean() * 100)}% consensus anchors, "
           f"{n_ok}/{n_seg} segments fitted, {len(ball3d)} 3D frames")
     return ball3d

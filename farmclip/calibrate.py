@@ -101,18 +101,12 @@ def _swap_lr(a: dict, only: str | None = None) -> dict:
     return {sw(k): v for k, v in a.items()}
 
 
-def solve_auto(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, dict]:
-    """solve() for AI-detected keypoints, tolerant of left/right label drift.
-
-    The fine-tuned model inherits per-clip naming drift from its training
-    annotations: individual pairs (e.g. net_top) come out mirrored. Two-step
-    fix: (1) majority-vote the image side of '_left' within each group (net
-    rig vs floor) and flip minority pairs; (2) solve the 4 group-level swap
-    variants (as in scripts/calib_solve.py), lowest reprojection error wins.
-    Returns (polished calib, the point dict actually used).
-    """
+def _vote_pairs(points_2d: dict) -> dict:
+    """Fix individually mirrored L/R pairs: within each group (net rig vs
+    floor), majority-vote which image side '_left' lands on and flip the
+    minority pairs. Model detections need this; human clicks are unaffected."""
     pts = dict(points_2d)
-    for grp in (True, False):  # True = net-rig pairs, False = floor pairs
+    for grp in (True, False):
         sides = {}
         for k, (u, _) in pts.items():
             if k.endswith("_left") and (k[:-5] in _NET_GROUP) == grp:
@@ -124,6 +118,20 @@ def solve_auto(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, dict]:
             if s != maj:
                 pts[pre + "_left"], pts[pre + "_right"] = \
                     pts[pre + "_right"], pts[pre + "_left"]
+    return pts
+
+
+def solve_auto(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, dict]:
+    """solve() for AI-detected keypoints, tolerant of left/right label drift.
+
+    The fine-tuned model inherits per-clip naming drift from its training
+    annotations: individual pairs (e.g. net_top) come out mirrored. Two-step
+    fix: (1) majority-vote the image side of '_left' within each group (net
+    rig vs floor) and flip minority pairs; (2) solve the 4 group-level swap
+    variants (as in scripts/calib_solve.py), lowest reprojection error wins.
+    Returns (polished calib, the point dict actually used).
+    """
+    pts = _vote_pairs(points_2d)
 
     grp_swap = dict(pts)
     for pre in _NET_GROUP:
@@ -164,6 +172,7 @@ def solve_web(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, float | No
     only (planar IPPE with mirror rejection + bounded LM), then net height is
     MEASURED from the clicked net_top / antenna points. Returns (calib, net_h).
     """
+    points_2d = _vote_pairs(points_2d)
     floor = {k: v for k, v in points_2d.items()
              if k in KEYPOINTS and KEYPOINTS[k][1] == 0}
     if len(floor) < 5:  # not enough floor: fall back to joint solve
