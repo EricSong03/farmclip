@@ -9,3 +9,13 @@ __pycache__/
 player_dataset/
 runs/
 finetune_out/
+.ipynb_checkpoints/
+*-checkpoint.*
+
+# Court keypoint pack: labels + configs are tracked, bulk images are not.
+# Re-extract clip frames from examples/; web images via court/testimgs/sources.txt.
+court/images/
+court/testimgs/*.jpg
+court/_quarantine/
+*.cache
+court_clips/

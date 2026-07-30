@@ -16,6 +16,57 @@
 - **YOLO11n generic "sports ball" is useless on this footage** (16% detection,
   mostly false locks) — don't revisit without a volleyball-finetuned model.
 
+## Court keypoint pose model (court_train_pack, 2026-07-30)
+
+Trained `yolo11s-court.pt` on the 18-keypoint pack (94 labelled frames:
+menlo 40, mikasa 27, web-scraped 27). Runs in `runs/pose/`; eval via
+`scripts/court_kp_val.py`, L/R repair via `scripts/fix_lr_labels.py`.
+
+- **The pack shipped with train/val leakage.** `web_web_014` and `web_web_017`
+  were byte-identical duplicates present in *both* splits (2 of 19 val images,
+  10.5%), inflating every val metric. Quarantined out of train to
+  `court/_quarantine/`. Re-check any future pack for this.
+- **L/R naming convention is world-anchored, not image-anchored.** `_left`
+  keypoints sit at the LARGER image-x in ~97% of frames. 8 label files (all
+  `web_web_*`) carried the inverted convention; `scripts/fix_lr_labels.py`
+  canonicalises them (per-frame majority vote, then residual per-pair repair).
+  Note `fliplr` augmentation is SAFE with the pack's `flip_idx`: mirroring plus
+  the L/R rename preserves "left at larger x".
+- **4 of 18 keypoints are effectively unlabelled.** `post_top_left` (0 visible
+  instances), `post_top_right` (4), `post_base_left` (3), `post_base_right` (3).
+  They are masked out of the pose loss, so their outputs are untrained noise.
+  Never feed them to solvePnP. `corner_near_right` is also thin (24/94).
+- **`antenna_tip_right` needs a LONG schedule to learn at all.** The image-left
+  antenna is a thin red/white pole against a dark brick pillar (mikasa) or
+  cluttered stands (menlo), and is visually near-identical to its mirror twin,
+  so the model sits in the wrong mode for hundreds of epochs. At 300 epochs it
+  is confidently wrong (~314px median); at 661 epochs it converges to ~34px.
+  Labels are consistent (verified), so this was never a labelling bug. Do not
+  judge this keypoint -- or stop training -- before ~450 epochs.
+- **300 epochs is not enough; use `epochs=700 patience=250`.** The recipe's
+  300/50 stops far too early. v4 was still improving at epoch 452
+  (mAP50-95(P) 0.562 -> 0.672) and only early-stopped at 661.
+- **Keypoint confidence does NOT predict error — do not filter on it.**
+  Pearson r = 0.029 between predicted kpt-conf and pixel error. The *bad*
+  predictions score mean conf 1.000, *higher* than the good ones (0.984);
+  `antenna_tip_right` is confidently wrong at conf 1.000. Exclude unreliable
+  keypoints by index, not by threshold.
+- **`imgsz=640` costs precision on 1280x720 footage** but the effect is small
+  next to data quantity; 1280 mainly shrinks the error tail (p90 475 -> 357px).
+- **Ultralytics `pose mAP50` is near-useless on this val set** — it sat pinned
+  at exactly 0.685 for a whole 300-epoch run (19 images, one instance each, and
+  uniform OKS sigmas since nkpt != 17). Judge this model by pixel error.
+- **Training clips-only makes the core 12 keypoints better but breaks BOTH
+  antennas** (532/625px). The 19 heterogeneous web images are what breaks the
+  antenna mirror symmetry. Keep them in the training mix.
+- **Model comparison on the 13-image clips val (median / mean / p90 / max px):**
+  v1 640, dirty labels 17.5 / 81.1 / 332 / 562; v2 1280 300ep 18.2 / 48.5 / 88 /
+  362; v3 1280 clips-only 19.2 / 110.8 / 534 / 668; **v4 1280 700ep (all
+  sources) 21.8 / 35.9 / 94 / 166 <- ship this one**. v4 has a slightly worse
+  median but is the only run with no catastrophically-broken keypoint (worst is
+  corner_near_left at 42px). Since kpt-confidence cannot flag outliers, bounded
+  worst-case matters far more than best-case median for solvePnP.
+
 ## Footage / calibration
 
 - **Court corners rarely visible.** Typical PoV is low, behind the end line — the "click 4 corners" flow in the current stub is unusable on real footage. Superseded by named-keypoint spec; stub UI not yet updated.
