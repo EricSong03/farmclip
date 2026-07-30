@@ -101,12 +101,14 @@ def _swap_lr(a: dict, only: str | None = None) -> dict:
     return {sw(k): v for k, v in a.items()}
 
 
-def _vote_pairs(points_2d: dict) -> dict:
-    """Fix individually mirrored L/R pairs: within each group (net rig vs
-    floor), majority-vote which image side '_left' lands on and flip the
-    minority pairs. Model detections need this; human clicks are unaffected."""
+def _vote_pairs(points_2d: dict, groups=(True, False)) -> dict:
+    """Fix individually mirrored L/R pairs: within each group (True=net rig,
+    False=floor), majority-vote which image side '_left' lands on and flip
+    minority pairs. CAUTION: floor pairs at different depths can legitimately
+    have opposite image orderings in corner views — only vote the floor group
+    for model detections (solve_auto), never for clicks (solve_web)."""
     pts = dict(points_2d)
-    for grp in (True, False):
+    for grp in groups:
         sides = {}
         for k, (u, _) in pts.items():
             if k.endswith("_left") and (k[:-5] in _NET_GROUP) == grp:
@@ -172,7 +174,7 @@ def solve_web(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, float | No
     only (planar IPPE with mirror rejection + bounded LM), then net height is
     MEASURED from the clicked net_top / antenna points. Returns (calib, net_h).
     """
-    points_2d = _vote_pairs(points_2d)
+    points_2d = _vote_pairs(points_2d, groups=(True,))  # net rig only, see caution
     floor = {k: v for k, v in points_2d.items()
              if k in KEYPOINTS and KEYPOINTS[k][1] == 0}
     if len(floor) < 5:  # not enough floor: fall back to joint solve
