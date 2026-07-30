@@ -1,0 +1,13 @@
+{
+ "classes": [
+  "bg",
+  "sideline_left",
+  "sideline_right",
+  "endline_far",
+  "endline_near",
+  "attack_far",
+  "attack_near",
+  "center_line",
+  "net_band"
+ ]
+}
