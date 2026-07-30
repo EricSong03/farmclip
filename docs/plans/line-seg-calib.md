@@ -26,15 +26,39 @@ Loss: weighted CE (background ↓, lines ↑) + dice. imgsz 960. AdamW 3e-4,
 ~200 epochs on GPU (user's box; CPU smoke-test flag `--steps N`).
 YOLO-seg rejected: instance masks are poor for 3px-wide lines.
 
-## Phase 3 — inference + line solve (`farmclip/lineseg.py`)
+## Phase 3 — inference + line solve (`farmclip/lineseg.py`) — DONE
 
-Per class: threshold logits → skeletonize/sample pixels → the solve optimizes
-(rvec, tvec, f, net_h) minimizing point-to-projected-line distance (same
-machinery as solve_web's joint refine, but dense). Init from keypoint model or
-hypothesis search. Chain into cli.calibrate as highest-priority path once it
-beats the keypoint path on calib_eval.
+Built as planned, with three deviations worth recording:
+
+- **Mean softmax over the sampled frames, then argmax** (not per-frame masks).
+  Players occlude different lines in different frames; the camera is
+  stationary, so averaging first is strictly cleaner and costs one pass.
+- **Interpretation-plane residuals**, not projected endpoints:
+  `l = K⁻ᵀ (a_cam × b_cam)`, distance = `l·[u,v,1] / ‖l₁₂‖`. Projecting the
+  endpoints breaks whenever one is behind the camera — constant for sidelines.
+  `soft_l1` loss, since segmentation always leaks a few pixels onto other
+  sports' floor markings. Each class is weighted `1/√n` so a long sideline
+  can't outvote a short attack line.
+- **Net height is withheld when unobservable.** A camera in the net plane
+  (x=0) projects EVERY net height to the same image line — and sideline
+  cameras sit near that plane. The solve perturbs net_h by ±0.15 m post-hoc
+  and drops `net_h_est` if the residual barely moves. Pose is unaffected;
+  the reported height would have been fiction. Guarded in `_self_check()`.
+
+Wiring (`cli.calibrate`): keypoints → lineseg refine → hough → lineseg refine.
+The keypoint calib now seeds lineseg **even when the 12px gate rejects it**
+(`rejected=True`) — a sloppy pose is still a fine init, and dense line
+evidence is what pulls it onto the paint. Accepted at ≤6px median line error.
+
+Run the solver's self-check with `python -m farmclip.lineseg`.
+
+## Phase 4 — eval
 
 ## Phase 4 — eval
 
 Same gates: calib_eval medians (menlo/mikasa/domes), kp_eval-style gallery for
 line masks, unseen-venue check on testimgs. Ship only if it beats v4 keypoints.
+
+v2 weights (200 epochs) hit per-class val IoU 0.64–0.73 on 5px-wide lines.
+Debug output per run: `debug/lineseg_mask.jpg` (segmented pixels) next to the
+usual `calib_overlay.jpg`.
