@@ -53,6 +53,26 @@ def edge_dt(img, lo=50, hi=150):
     return cv2.distanceTransform(255 - e, cv2.DIST_L2, 3)
 
 
+def line_dt(img, thresh=12.0, min_px=400):
+    """Distance to the nearest thing that looks like a PAINTED LINE ON A FLOOR.
+
+    Canny answers "is there an edge here", and in a gym the honest answer is
+    yes almost everywhere — ceiling trusses, bleachers, chairs, crowd. Measured
+    on real footage, edge_dt scored a visibly correct pose at coverage 0.43 and
+    a pose thrown into the ceiling at 0.77, i.e. it ranked them backwards. The
+    stripe test (flanks match each other) plus the floor mask throws out
+    everything that is not on the playing surface, which is what the coverage
+    number was always supposed to mean.
+    """
+    from .lines import floor_mask, stripe_response
+
+    m = ((stripe_response(img) > thresh).astype(np.uint8) * 255)
+    m = cv2.bitwise_and(m, floor_mask(img))
+    if int(m.sum()) // 255 < min_px:   # dim or blown-out floor: better than nothing
+        return edge_dt(img)
+    return cv2.distanceTransform(255 - m, cv2.DIST_L2, 3)
+
+
 def _support(p, q, dt, near=4.0, step=3.0):
     """Coverage and error for the projected segment p->q against an edge DT.
 
@@ -82,7 +102,7 @@ def score(img, calib, net_h=None):
     Returns {line: {"coverage": f, "err": px}} plus aggregate keys.
     net_h shifts the net line to its measured height (regulation if None).
     """
-    dt = edge_dt(img)
+    dt = line_dt(img)
     dy = 0.0 if net_h is None else net_h - NET_H
     out, covs, errs = {}, [], []
     for name, (a, b) in MODEL.items():
@@ -109,7 +129,33 @@ def score(img, calib, net_h=None):
         "n_matched": len(matched),
         "mean_coverage": round(float(np.mean(covs)), 3) if covs else 0.0,
         "err": round(float(np.median(errs)), 2) if errs else None,
+        # Surfaced separately because it is the sharpest signal we have and the
+        # aggregates above deliberately exclude it. The net is the only
+        # high-contrast structure OFF the floor, so a wrong pose cannot put it
+        # in the right place, while floor lines are ambiguous enough that even a
+        # collapsed wireframe lands near something. Measured on three calibs
+        # with known ground truth: correct -> net err 1.9px / coverage 1.00;
+        # two wrong -> 262.5px and 135.3px, both coverage 0.00. Floor-only
+        # mean coverage ranked those BACKWARDS (correct 0.33, wrong 0.37).
+        "net_err": out["net"]["err"],
+        "net_coverage": out["net"]["coverage"],
     }
+
+
+def net_ok(s, max_err=30.0):
+    """Is the NET where the pose says it is? (ok, reason).
+
+    Cheap, sharp, and independent of the floor-coverage thresholds, which do
+    not separate good poses from bad on glossy-wood gyms. Use this to gate a
+    calibration when floor coverage is inconclusive. None when the net does not
+    project into frame — absence of evidence, not evidence of a bad pose.
+    """
+    e = s.get("net_err")
+    if e is None:
+        return None, "net not in frame"
+    if e > max_err:
+        return False, f"net {e:.0f}px from the real net band (>{max_err:.0f})"
+    return True, f"net matches at {e:.1f}px"
 
 
 def verdict(s, min_matched=4, min_coverage=0.6, max_err=5.0):
