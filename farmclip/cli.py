@@ -70,6 +70,25 @@ def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
         # still worth returning: too loose to ship, good enough to seed the
         # line solve, which re-fits the pose against dense line evidence
         return dict(calib, rejected=True)
+    # Reprojection error alone cannot catch a self-consistent WRONG pose: v6b
+    # produced a 7.0px anchor on a head-on clip whose net projected 262px off
+    # the real net band. Check the net independently — it is the only
+    # high-contrast structure off the floor, so a wrong pose cannot place it.
+    # Scored on a MEDIAN frame, not a raw one, and that is not a detail:
+    # players and equipment standing near a wrongly-projected net supply
+    # spurious line-like evidence. Measured on the same calib — raw frame said
+    # the net matched at 5.7px, the median frame said 262.5px. The median
+    # erases everything that moves and leaves an unoccluded court.
+    from .calib_score import net_ok, score
+    try:
+        judge_frame = video.median_frame(clip)
+    except Exception:
+        judge_frame = ref[1]
+    ok, why = net_ok(score(judge_frame, calib, net_h=calib.get("net_h_est")))
+    if ok is False:
+        print(f"ai_kp: {calib['err']:.1f}px floor fit but {why} — rejecting AI anchor")
+        return dict(calib, rejected=True)
+    print(f"ai_kp: net check — {why}")
     calib["method"] = "ai_kp"
     calib["ref_frame"] = ref[0]
     (out / "calib.json").write_text(json.dumps(calib, indent=1))
