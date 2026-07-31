@@ -17,9 +17,10 @@
   <button id="open">open project folder</button>
   <select id="run"></select>
   <span>click: <span id="cur">—</span></span>
-  <button id="skip">skip (not visible)</button>
-  <button id="undo">undo</button>
+  <button id="skip">skip (s)</button>
+  <button id="undo">undo (u)</button>
   <select id="relabel"><option value="">relabel…</option></select>
+  <button id="prev" style="display:none">◀ prev image (r)</button>
   <button id="next" style="display:none">next image (n)</button>
   <button id="bad" style="display:none">bad image (delete) (d)</button>
   <span id="saved"></span>
@@ -105,7 +106,7 @@ const webDir = async () =>
 async function loadWeb(k) {
   webMode = true; webIdx = k;
   clearInterval(pollTimer); pollStem = null;
-  $("next").style.display = $("bad").style.display = "";
+  $("next").style.display = $("bad").style.display = $("prev").style.display = "";
   ann = {}; order = POINTS.slice(); oi = 0;
   if (k >= webQueue.length) {
     ctx.clearRect(0, 0, cv.width, cv.height);
@@ -120,12 +121,24 @@ async function loadWeb(k) {
     webQueue.splice(k, 1);
     return loadWeb(k);
   }
+  // Reload labels already on disk. Without this, stepping BACK to an image
+  // would start from an empty ann, and the next click would save() just that
+  // one point over the top of everything previously clicked.
+  try {
+    const lf = await (await getHandle(
+      dir, `out/webimgs/labels/${stem(webQueue[k])}.json`)).getFile();
+    ann = JSON.parse(await lf.text());
+    oi = order.findIndex(p => !(p in ann));
+    if (oi < 0) oi = order.length;
+  } catch {} // never labelled yet
   img.src = URL.createObjectURL(file);
   img.onload = draw;
-  $("saved").textContent = `${k + 1} / ${webQueue.length} unlabeled`;
+  $("saved").textContent = `${k + 1} / ${webQueue.length} unlabeled`
+    + (Object.keys(ann).length ? ` · ${Object.keys(ann).length} pts loaded` : "");
 }
 
 $("next").onclick = () => { if (webMode) loadWeb(webIdx + 1); };
+$("prev").onclick = () => { if (webMode && webIdx > 0) loadWeb(webIdx - 1); };
 $("bad").onclick = async () => {
   if (!webMode || webIdx >= webQueue.length) return;
   const name = webQueue[webIdx];
@@ -140,8 +153,13 @@ $("bad").onclick = async () => {
   loadWeb(webIdx);
 };
 document.addEventListener("keydown", e => {
-  if (!webMode || /SELECT|INPUT/.test(e.target.tagName)) return;
+  if (/SELECT|INPUT/.test(e.target.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
+  // s/u are point-level, so they work in run mode too; n/r/d are image nav
+  if (e.key === "s") { $("skip").onclick(); return; }
+  if (e.key === "u") { $("undo").onclick(); return; }
+  if (!webMode) return;
   if (e.key === "n") $("next").onclick();
+  if (e.key === "r") $("prev").onclick();
   if (e.key === "d") $("bad").onclick();
 });
 
