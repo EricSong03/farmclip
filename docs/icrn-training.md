@@ -1,5 +1,13 @@
 # GPU training handoff (icrn session)
 
+> **This round is done — see `docs/plans/court-pose-v6-results.md`.**
+> Shipped: **court-pose-v6b** (13.7px median, handedness correct, 5% no-detect)
+> plus a lineseg refresh. One correction to the recipe below: the
+> `epochs=300 patience=50` schedule **stranded two output channels dead**
+> (`attack_near_right`, `corner_near_left`) while unlearning v5's inverted
+> handedness, which made the pipeline reject the AI anchor on both local clips.
+> v5's own `epochs=700 patience=250` fixes it. Use that.
+
 Context: farmclip auto-calibrates volleyball footage from named court
 keypoints. Two models:
 
