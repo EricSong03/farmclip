@@ -11,7 +11,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .court import KEYPOINTS, LINES, keypoint_array
+from .court import KEYPOINTS, LINES, NET_H, keypoint_array
 
 
 def solve(points_2d: dict[str, tuple[float, float]], img_w: int, img_h: int) -> dict:
@@ -317,6 +317,86 @@ def solve_web(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, float | No
     return calib, net_h
 
 
+def solve_labeled(points_2d: dict, img_w: int, img_h: int,
+                  free_net_h: bool = True) -> dict:
+    """Pose from the labels EXACTLY as given. No renaming, no mirror search.
+
+    solve_web/solve_auto deliberately second-guess the naming: _vote_pairs
+    flips L/R pairs by majority vote, and the floor solve tries both the points
+    and their mirror and keeps whichever comes out upright. That is right for
+    MODEL detections, which carry naming drift, and wrong for human clicks,
+    where the name IS the assertion being made. Here every correspondence is
+    taken at face value, so the same clicks always produce the same pose.
+
+    Given >=4 named correspondences the pose is determined; the only genuine
+    unknowns left are the focal length (intrinsics unknown -> grid + LM) and,
+    when net points are present, the net height (venues vary 2.24-2.43 m).
+
+    A labelling that is geometrically impossible is REPORTED, never silently
+    repaired: `cam_below_floor` means the correspondences can only be satisfied
+    by a camera underneath the court, which in practice means near/far or
+    left/right is flipped. Use the clicker's f / g keys to say which.
+    """
+    from scipy.optimize import least_squares
+
+    names = [n for n in points_2d if n in KEYPOINTS
+             and points_2d[n] is not None and points_2d[n][0] is not None]
+    if len(names) < 4:
+        raise ValueError(f"need >=4 labelled points, got {len(names)}")
+    img = np.array([points_2d[n] for n in names], float)
+    base = np.array([KEYPOINTS[n] for n in names], float)
+    above = base[:, 1] > 0                      # net rig: height rides on net_h
+    offs = base[:, 1] - NET_H                   # antenna sits NET_H+0.8 etc.
+    has_net = bool(above.any())
+
+    def obj_at(nh):
+        o = base.copy()
+        if has_net:
+            o[above, 1] = nh + offs[above]
+        return o
+
+    def resid(p):
+        K = np.array([[p[6], 0, img_w / 2], [0, p[6], img_h / 2], [0, 0, 1]])
+        proj, _ = cv2.projectPoints(obj_at(p[7]), p[:3], p[3:6], K, None)
+        return (proj.reshape(-1, 2) - img).ravel()
+
+    best = None                                  # focal grid + SQPNP for init
+    for f in np.arange(0.30, 3.51, 0.05) * img_w:
+        K = np.array([[f, 0, img_w / 2], [0, f, img_h / 2], [0, 0, 1]])
+        ok, rv, tv = cv2.solvePnP(obj_at(NET_H).astype(np.float32),
+                                  img.astype(np.float32), K, None,
+                                  flags=cv2.SOLVEPNP_SQPNP)
+        if not ok:
+            continue
+        p = np.concatenate([rv.ravel(), tv.ravel(), [f], [NET_H]])
+        e = float(np.sqrt(np.mean(resid(p) ** 2)))
+        if best is None or e < best[0]:
+            best = (e, p)
+    if best is None:
+        raise RuntimeError("solvePnP failed at every focal length")
+
+    lo = [-np.inf] * 6 + [0.30 * img_w, 1.80 if (has_net and free_net_h) else NET_H - 1e-9]
+    hi = [np.inf] * 6 + [3.50 * img_w, 2.70 if (has_net and free_net_h) else NET_H + 1e-9]
+    sol = least_squares(resid, best[1], method="trf", bounds=(lo, hi), max_nfev=5000)
+    p = sol.x
+
+    d = np.linalg.norm(resid(p).reshape(-1, 2), axis=1)
+    R = cv2.Rodrigues(p[:3])[0]
+    cam = -R.T @ p[3:6]                          # camera centre in world metres
+    return {
+        "img_w": img_w, "img_h": img_h, "f": float(p[6]),
+        "rvec": p[:3].tolist(), "tvec": p[3:6].tolist(),
+        "err": float(np.sqrt(np.mean(d ** 2))),
+        "per_point_err": {n: float(e) for n, e in zip(names, d)},
+        "net_h_est": round(float(p[7]), 3) if (has_net and free_net_h) else None,
+        "cam": [round(float(v), 2) for v in cam],
+        "cam_height": round(float(cam[1]), 2),
+        "cam_below_floor": bool(cam[1] < 0),
+        "n_points": len(names),
+        "method": "labeled",
+    }
+
+
 def calib_matrices(calib: dict):
     K = np.array(
         [[calib["f"], 0, calib["img_w"] / 2], [0, calib["f"], calib["img_h"] / 2], [0, 0, 1]]
@@ -366,15 +446,26 @@ def draw_overlay(frame, calib: dict, annotations: dict | None = None,
     net_h: measured net height — shifts everything above the floor by
     (net_h - regulation 2.43) so the net band/antennas draw where they really are."""
     out = frame.copy()
+    h_img, w_img = out.shape[:2]
     dy = 0.0 if net_h is None else net_h - 2.43
     shift = lambda p: (p[0], p[1] + dy, p[2]) if p[1] > 0 else p
+    _, rvec, tvec = calib_matrices(calib)
+    R = cv2.Rodrigues(rvec)[0]
+    t = tvec.ravel()
     for a, b in [(shift(a), shift(b)) for a, b in LINES]:
-        seg3d = np.linspace(a, b, 20)  # sample so long lines curve correctly under perspective? (pinhole: straight, but keeps clipping simple)
+        seg3d = np.linspace(a, b, 60)
+        # Near-plane clip. A point BEHIND the camera still projects to a finite
+        # (mirrored) pixel, so an isfinite check passes it and the line whips
+        # across the frame. Most of the court is legitimately off-screen in
+        # this footage, so this is the common case, not an edge case.
+        z_cam = (seg3d @ R.T + t)[:, 2]
         pts = project(calib, seg3d)
+        ok = (z_cam > 0.05) & np.isfinite(pts).all(1) \
+            & (np.abs(pts[:, 0]) < 20 * w_img) & (np.abs(pts[:, 1]) < 20 * h_img)
         for i in range(len(pts) - 1):
-            p, q = pts[i], pts[i + 1]
-            if np.all(np.isfinite(p)) and np.all(np.isfinite(q)):
-                cv2.line(out, tuple(p.astype(int)), tuple(q.astype(int)), (255, 255, 0), 2)
+            if ok[i] and ok[i + 1]:  # cv2.line clips to the frame for us
+                cv2.line(out, tuple(pts[i].astype(int)), tuple(pts[i + 1].astype(int)),
+                         (255, 255, 0), 2)
     for name, (x, y, z) in KEYPOINTS.items():
         (u, v), = project(calib, [(x, y + dy if y > 0 else y, z)])
         if 0 <= u < out.shape[1] and 0 <= v < out.shape[0]:

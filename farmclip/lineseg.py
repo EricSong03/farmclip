@@ -28,10 +28,11 @@ _SESSIONS = {}
 
 
 def class_lines(net_h: float) -> dict[int, tuple]:
-    """class id -> 3D segment. Left = z=-HW as seen from +X (court.py convention)."""
+    """class id -> 3D segment. Left = +Z = IMAGE-left (court.py convention)."""
     return {
-        1: ((-HL, 0, -HW), (+HL, 0, -HW)),
-        2: ((-HL, 0, +HW), (+HL, 0, +HW)),
+        # sideline_left is +Z, matching court.KEYPOINTS: left means IMAGE-left.
+        1: ((-HL, 0, +HW), (+HL, 0, +HW)),
+        2: ((-HL, 0, -HW), (+HL, 0, -HW)),
         3: ((-HL, 0, -HW), (-HL, 0, +HW)),
         4: ((+HL, 0, -HW), (+HL, 0, +HW)),
         5: ((-ATTACK, 0, -HW), (-ATTACK, 0, +HW)),
