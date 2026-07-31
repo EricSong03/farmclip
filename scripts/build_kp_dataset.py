@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from farmclip.calibrate import canonical_lr, consistent_names, solve_web
+from farmclip.calibrate import solve_labeled
 from farmclip.court import KEYPOINTS
 from farmclip.video import video_info, read_frames
 from calib_eval import score_frame
@@ -68,15 +68,30 @@ for run, outdir, video in RUNS:
         print(f"[{run}] no annotations.json — skipping (label it in calib.html)")
         continue
     ann = drop_posts(json.loads((outdir / "annotations.json").read_text()))
+    # Quality gate on the run's own labels. Clicks are trusted now (no mirror
+    # search to rescue a bad set), so a run whose annotations do not solve to a
+    # physical camera would train the model on nonsense. menlo fails this at
+    # 741px as-clicked and 315px mirrored -- broken under either convention --
+    # and its 30px calib is what poisoned the lineseg masks too.
+    try:
+        _ref = cv2.imread(str(outdir / "debug" / "ref_frame.jpg"))
+        _c = solve_labeled(ann, _ref.shape[1], _ref.shape[0])
+        if _c["cam_below_floor"] or _c["err"] > 25:
+            print(f"[{run}] SKIPPED - labels solve to {_c['err']:.0f}px"
+                  f"{' with camera under the floor' if _c['cam_below_floor'] else ''}"
+                  f" - relabel in calib.html")
+            continue
+        print(f"[{run}] labels ok: {_c['err']:.1f}px, cam {_c['cam_height']}m up")
+    except Exception as _e:
+        print(f"[{run}] SKIPPED - label solve failed ({_e})")
+        continue
     calib = None
     if (outdir / "calib.json").exists():
         calib = json.loads((outdir / "calib.json").read_text())
-        # consistent_names renames clicks to match the SOLVED pose, and the
-        # solve may pick the mirrored world assignment (the court is
-        # symmetric). Measured: that flipped handedness on 51 of 52 web
-        # images, so every '_left' the human clicked was stored as '_right'.
-        # Canonicalise after, so training labels always mean image-left.
-        ann = canonical_lr(consistent_names(ann, calib))
+        # Clicks are taken as given. consistent_names/canonical_lr used to
+        # live here to undo court.py's inverted L/R convention; that is
+        # fixed at the source now, so renaming would only reintroduce the
+        # ambiguity it was compensating for.
         ref = cv2.imread(str(outdir / "debug" / "ref_frame.jpg"))
         ref_med, _ = court_median(ref, calib)
         print(f"[{run}] ref median {ref_med}")
@@ -121,16 +136,11 @@ for lp in sorted((webdir / "labels").glob("*.json")) if (webdir / "labels").exis
     frame = cv2.imread(str(imgp))
     h, w = frame.shape[:2]
     try:
-        calib, _net_h = solve_web(ann, w, h)
+        calib = solve_labeled(ann, w, h)
         if calib["err"] > 30:  # floor-only err: tighter gate than the old joint solve
             print(f"[web] {lp.stem}: floor err {calib['err']:.0f}px — rejecting (bad labels?)")
             continue
-        # consistent_names renames clicks to match the SOLVED pose, and the
-        # solve may pick the mirrored world assignment (the court is
-        # symmetric). Measured: that flipped handedness on 51 of 52 web
-        # images, so every '_left' the human clicked was stored as '_right'.
-        # Canonicalise after, so training labels always mean image-left.
-        ann = canonical_lr(consistent_names(ann, calib))
+        pass  # clicks taken as given (see note above)
     except Exception as e:
         print(f"[web] {lp.stem}: solve failed ({e}) — keeping points as clicked")
     split = "val" if n_kept % 5 == 4 else "train"
