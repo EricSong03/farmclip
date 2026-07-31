@@ -101,6 +101,32 @@ def _swap_lr(a: dict, only: str | None = None) -> dict:
     return {sw(k): v for k, v in a.items()}
 
 
+# Reference pairs for handedness, best first. All lie at a SINGLE court depth
+# (x=0) or share one end line, so their image order is fixed by camera yaw and
+# cannot invert with perspective — unlike near/far pairs.
+_LR_REF = ("net_top", "antenna_tip", "center", "corner_far", "attack_far")
+
+
+def canonical_lr(ann: dict) -> dict:
+    """Force camera-POV handedness: '_left' sits on the IMAGE-left.
+
+    ONE global mirror for the whole label set, never per-pair. Per-pair
+    forcing looks stricter but is wrong: in corner views the NEAR pair
+    legitimately projects in the opposite image order to the FAR pair (measured
+    on our own labels: corner_near is only 76% image-left while corner_far is
+    100%), so flipping it alone puts corner_near_left on the opposite world
+    side from corner_far_left and destroys the 3D correspondence.
+
+    Anchored on a single-depth reference pair, which cannot invert. Returns the
+    dict unchanged when no reference pair is present.
+    """
+    for pre in _LR_REF:
+        l, r = ann.get(pre + "_left"), ann.get(pre + "_right")
+        if l and r and l[0] is not None and r[0] is not None:
+            return _swap_lr(ann) if l[0] > r[0] else dict(ann)
+    return dict(ann)
+
+
 def _vote_pairs(points_2d: dict, groups=(True, False)) -> dict:
     """Fix individually mirrored L/R pairs: within each group (True=net rig,
     False=floor), majority-vote which image side '_left' lands on and flip
@@ -253,12 +279,41 @@ def solve_web(points_2d: dict, img_w: int, img_h: int) -> tuple[dict, float | No
                     best = (cost, sol.x.copy(), resid)
         if best is not None:
             _, x, resid = best
-            net_h = float(x[7])
             fl_res = resid(x).reshape(-1, 2)[:len(fl_obj)]
-            calib = dict(calib, rvec=x[:3].tolist(), tvec=x[3:6].tolist(),
-                         f=float(x[6]),
-                         err=float(np.sqrt(np.mean(np.sum(fl_res ** 2, axis=1)))),
-                         net_h_est=round(net_h, 3))
+            new_err = float(np.sqrt(np.mean(np.sum(fl_res ** 2, axis=1))))
+            # The net refine must not wreck the floor solve it started from.
+            # It optimises floor AND net residuals jointly, so it will happily
+            # trade a good floor fit for a better net fit — measured on real
+            # labels: a 0.6px floor solve came back at 346px with net height
+            # pinned to its bound. lm_polish has this guard; this did not.
+            # Small regressions are allowed (the net points are real evidence
+            # and may legitimately pull the pose a little); blow-ups are not.
+            if new_err <= max(calib["err"] * 1.5, calib["err"] + 2.0):
+                net_h = float(x[7])
+                calib = dict(calib, rvec=x[:3].tolist(), tvec=x[3:6].tolist(),
+                             f=float(x[6]), err=new_err,
+                             net_h_est=round(net_h, 3))
+            else:
+                # Refine rejected: keep the floor pose, but still measure the
+                # net height against it with the pose FROZEN (1 free parameter).
+                # Returning None here would make draw_overlay fall back to
+                # regulation 2.43 m, drawing the net in the wrong place on a
+                # 2.24 m court even though the floor solve was good.
+                fixed = np.concatenate([calib["rvec"], calib["tvec"], [calib["f"]]])
+
+                def nh_only(q):
+                    return resid(np.concatenate([fixed, q]))[2 * len(fl_obj):]
+
+                try:
+                    s1 = least_squares(nh_only, [2.43], method="trf",
+                                       bounds=([1.8], [2.7]), max_nfev=200)
+                    nh = float(s1.x[0])
+                    pinned = min(abs(nh - 1.8), abs(nh - 2.7)) < 1e-3
+                    net_h = None if pinned else nh
+                    if net_h is not None:
+                        calib = dict(calib, net_h_est=round(net_h, 3))
+                except Exception:
+                    net_h = None
     return calib, net_h
 
 

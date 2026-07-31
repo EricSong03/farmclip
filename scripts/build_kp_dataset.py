@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from farmclip.calibrate import consistent_names, solve_web
+from farmclip.calibrate import canonical_lr, consistent_names, solve_web
 from farmclip.court import KEYPOINTS
 from farmclip.video import video_info, read_frames
 from calib_eval import score_frame
@@ -71,7 +71,12 @@ for run, outdir, video in RUNS:
     calib = None
     if (outdir / "calib.json").exists():
         calib = json.loads((outdir / "calib.json").read_text())
-        ann = consistent_names(ann, calib)
+        # consistent_names renames clicks to match the SOLVED pose, and the
+        # solve may pick the mirrored world assignment (the court is
+        # symmetric). Measured: that flipped handedness on 51 of 52 web
+        # images, so every '_left' the human clicked was stored as '_right'.
+        # Canonicalise after, so training labels always mean image-left.
+        ann = canonical_lr(consistent_names(ann, calib))
         ref = cv2.imread(str(outdir / "debug" / "ref_frame.jpg"))
         ref_med, _ = court_median(ref, calib)
         print(f"[{run}] ref median {ref_med}")
@@ -120,7 +125,12 @@ for lp in sorted((webdir / "labels").glob("*.json")) if (webdir / "labels").exis
         if calib["err"] > 30:  # floor-only err: tighter gate than the old joint solve
             print(f"[web] {lp.stem}: floor err {calib['err']:.0f}px — rejecting (bad labels?)")
             continue
-        ann = consistent_names(ann, calib)
+        # consistent_names renames clicks to match the SOLVED pose, and the
+        # solve may pick the mirrored world assignment (the court is
+        # symmetric). Measured: that flipped handedness on 51 of 52 web
+        # images, so every '_left' the human clicked was stored as '_right'.
+        # Canonicalise after, so training labels always mean image-left.
+        ann = canonical_lr(consistent_names(ann, calib))
     except Exception as e:
         print(f"[web] {lp.stem}: solve failed ({e}) — keeping points as clicked")
     split = "val" if n_kept % 5 == 4 else "train"
