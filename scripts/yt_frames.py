@@ -141,26 +141,36 @@ def stage(url: str, n: int):
           f"review the sheets, then: yt_frames.py pick {vid} f<N> f<N> ...")
 
 
-def pick(vid: str, frames: list[str]):
+def pick(vid: str, frames: list[str], dest: Path | None = None, prefix="web"):
+    """Promote staged frames. dest defaults to the TRAINING pool (out/webimgs).
+
+    Pass a different dest for held-out test frames — anything landing in
+    out/webimgs gets labelled and trained on, which would stop it being a test
+    set at all.
+    """
+    out = Path(dest) if dest else WEB
+    out.mkdir(parents=True, exist_ok=True)
     d = STAGE / vid
     meta = json.loads((d / "meta.json").read_text())
-    nxt = next_index()
+    nxt = next_index() if out == WEB else (
+        max((int(p.stem.split("_")[-1]) for p in out.glob(f"{prefix}_*.jpg")),
+            default=-1) + 1)
     lines = []
     for fr in frames:
         src = d / (fr if fr.endswith(".jpg") else fr + ".jpg")
         if not src.exists():
-            print(f"  {fr}: not staged — skipping")
+            print(f"  {fr}: not staged - skipping")
             continue
-        name = f"web_{nxt:03d}.jpg"
-        shutil.copyfile(src, WEB / name)
+        name = f"{prefix}_{nxt:03d}.jpg"
+        shutil.copyfile(src, out / name)
         t = int(int(fr.lstrip("f").removesuffix(".jpg")) / meta["fps"])
         lines.append(f"{name}\t{meta['url']}&t={t}s")
         print(f"  {fr} -> {name}  (@{t//60}m{t%60:02d}s)")
         nxt += 1
     if lines:
-        with (WEB / "sources.txt").open("a", encoding="utf-8") as fh:
+        with (out / "sources.txt").open("a", encoding="utf-8") as fh:
             fh.write("".join(l + "\n" for l in lines))
-    print(f"promoted {len(lines)} frames into out/webimgs")
+    print(f"promoted {len(lines)} frames into {out}")
 
 
 def main():
@@ -172,6 +182,8 @@ def main():
     p = sub.add_parser("pick")
     p.add_argument("vid")
     p.add_argument("frames", nargs="+")
+    p.add_argument("--dest", help="output dir (default out/webimgs = TRAINING pool)")
+    p.add_argument("--prefix", default="web")
     sh = sub.add_parser("sheets", help="rebuild sheets for staged (or all) vids")
     sh.add_argument("vid", nargs="?")
     a = ap.parse_args()
@@ -184,7 +196,7 @@ def main():
             n = build_sheets(v)
             print(f"{v}: {n} frames\n")
     else:
-        pick(a.vid, a.frames)
+        pick(a.vid, a.frames, a.dest, a.prefix)
 
 
 if __name__ == "__main__":

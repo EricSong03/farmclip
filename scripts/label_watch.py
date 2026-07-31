@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from farmclip.calibrate import draw_overlay, solve_web
+from farmclip.calibrate import draw_overlay, solve_labeled
 from farmclip.court import KEYPOINTS
 
 
@@ -70,58 +70,76 @@ def depth_span(ann):
     xs = [KEYPOINTS[k][0] for k in ann if k in KEYPOINTS]
     return (max(xs) - min(xs)) if xs else 0.0
 
-WEB = Path(__file__).parent.parent / "out/webimgs"
-OVL = WEB / "overlays"
-OVL.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).parent.parent
+# Both pools: out/webimgs is training, out/testimgs is the held-out benchmark.
+# The clicker can write to either, so the watcher has to render overlays for
+# both or the test set is labelled blind.
+POOLS = [d for d in (ROOT / "out/webimgs", ROOT / "out/testimgs") if d.exists()]
+for _p in POOLS:
+    (_p / "overlays").mkdir(parents=True, exist_ok=True)
 
-print(f"watching {WEB / 'labels'} ... ctrl-c to stop")
+print(f"watching {', '.join(str(p / 'labels') for p in POOLS)} ... ctrl-c to stop")
 while True:
-    for lp in sorted((WEB / "labels").glob("*.json")):
-        dst = OVL / (lp.stem + ".jpg")
-        if dst.exists() and dst.stat().st_mtime >= lp.stat().st_mtime:
-            continue
-        img_path = next((p for e in (".jpg", ".jpeg", ".png")
-                         if (p := WEB / (lp.stem + e)).exists()), None)
-        if img_path is None:
-            continue
-        try:
-            ann = json.loads(lp.read_text())
-        except (json.JSONDecodeError, OSError):  # mid-write
-            continue
-        ann = {k: v for k, v in ann.items() if not k.startswith("post_")}
-        frame = cv2.imread(str(img_path))
-        if frame is None or len(ann) < 5:
-            continue
-        h, w = frame.shape[:2]
-        try:
-            calib, net_h = solve_web(ann, w, h)
-            out = draw_overlay(frame, calib, ann, net_h=net_h)
-            e = calib["err"]
-            color = (0, 200, 0) if e < 15 else (0, 165, 255) if e < 40 else (0, 0, 255)
-            verdict = "good" if e < 15 else "check worst points" if e < 40 else "BAD - relabel"
-            nh = f" | net ~{net_h:.2f}m" if net_h else ""
-            bad = worst_click(ann, w, h, e)
-            span = depth_span(ann)
-            if bad:  # one mis-click poisons every point — name it
-                color = (0, 0, 255)
-                verdict = f"BAD POINT: {bad[0]} (without it {bad[1]:.1f}px)"
-            elif span < 8.0:  # under ~half the court's length: focal/depth degenerate
-                color = (0, 165, 255)
-                verdict = (f"SHALLOW ({span:.0f}m of court) - click the FAR end "
-                           f"(far corners / far attack line)")
-            elif not floor_spread_ok(ann):
-                color = (0, 165, 255)
-                verdict = "UNDERDETERMINED - click more floor pts (both sides!)"
-            cv2.putText(out, f"floor err {e:.1f}px - {verdict}{nh}", (12, 34),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
-        except Exception as ex:
-            out = frame.copy()
-            cv2.putText(out, "solve failed - need >=5 good pts", (12, 34),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
-            print(f"{lp.stem}: solve failed ({ex})")
-        cv2.imwrite(str(dst), out, [cv2.IMWRITE_JPEG_QUALITY, 88])
-        # label mtimes can sit in the future (browser-written) — pin the
-        # overlay's mtime to the label's so the staleness check terminates
-        os.utime(dst, (lp.stat().st_mtime, lp.stat().st_mtime))
-        print(f"{lp.stem}: overlay written")
+  for WEB in POOLS:
+    OVL = WEB / "overlays"
+    for lp in sorted((WEB / "labels").glob("*.json")) if (WEB / "labels").exists() else []:
+          dst = OVL / (lp.stem + ".jpg")
+          if dst.exists() and dst.stat().st_mtime >= lp.stat().st_mtime:
+              continue
+          img_path = next((p for e in (".jpg", ".jpeg", ".png")
+                           if (p := WEB / (lp.stem + e)).exists()), None)
+          if img_path is None:
+              continue
+          try:
+              ann = json.loads(lp.read_text())
+          except (json.JSONDecodeError, OSError):  # mid-write
+              continue
+          ann = {k: v for k, v in ann.items() if not k.startswith("post_")}
+          frame = cv2.imread(str(img_path))
+          if frame is None or len(ann) < 5:
+              continue
+          h, w = frame.shape[:2]
+          try:
+              # solve_labeled, NOT solve_web: solve_web re-votes L/R pairs and
+              # tries the mirrored floor assignment, i.e. it overrides the
+              # names the human just asserted. Here the clicks are ground
+              # truth and the pose is whatever they imply -- including an
+              # impossible one, which gets reported rather than repaired.
+              calib = solve_labeled(ann, w, h)
+              net_h = calib.get("net_h_est")
+              out = draw_overlay(frame, calib, ann, net_h=net_h)
+              e = calib["err"]
+              color = (0, 200, 0) if e < 15 else (0, 165, 255) if e < 40 else (0, 0, 255)
+              verdict = "good" if e < 15 else "check worst points" if e < 40 else "BAD - relabel"
+              nh = ((f" | net ~{net_h:.2f}m" if net_h else "")
+                    + f" | cam {calib['cam_height']}m up")
+              bad = worst_click(ann, w, h, e)
+              span = depth_span(ann)
+              if calib["cam_below_floor"]:
+                  # clicks satisfiable only by a camera under the court:
+                  # near/far or L/R is flipped. f / g in the clicker.
+                  color = (0, 0, 255)
+                  verdict = "IMPOSSIBLE POSE (camera under floor) - press f or g"
+              elif bad:
+                  color = (0, 0, 255)
+                  verdict = f"BAD POINT: {bad[0]} (without it {bad[1]:.1f}px)"
+              elif span < 8.0:  # under ~half the court's length: focal/depth degenerate
+                  color = (0, 165, 255)
+                  verdict = (f"SHALLOW ({span:.0f}m of court) - click the FAR end "
+                             f"(far corners / far attack line)")
+              elif not floor_spread_ok(ann):
+                  color = (0, 165, 255)
+                  verdict = "UNDERDETERMINED - click more floor pts (both sides!)"
+              cv2.putText(out, f"floor err {e:.1f}px - {verdict}{nh}", (12, 34),
+                          cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
+          except Exception as ex:
+              out = frame.copy()
+              cv2.putText(out, "solve failed - need >=5 good pts", (12, 34),
+                          cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+              print(f"{lp.stem}: solve failed ({ex})")
+          cv2.imwrite(str(dst), out, [cv2.IMWRITE_JPEG_QUALITY, 88])
+          # label mtimes can sit in the future (browser-written) — pin the
+          # overlay's mtime to the label's so the staleness check terminates
+          os.utime(dst, (lp.stat().st_mtime, lp.stat().st_mtime))
+          print(f"{lp.stem}: overlay written")
     time.sleep(1)
