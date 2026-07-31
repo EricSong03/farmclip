@@ -145,14 +145,17 @@ def solve_lines(pix: dict[int, np.ndarray], init: dict, net_h: float = 2.43,
     # Net height is unobservable when the camera sits in the net plane (x=0):
     # every height then projects to the SAME image line. Sideline cameras sit
     # near that plane, so check sensitivity instead of trusting the optimum.
-    if 8 in pix:
+    if 8 not in pix:
+        calib.pop("net_h_est", None)
+    elif min(abs(nh - nh_lo), abs(nh - nh_hi)) < 1e-3:
+        # pinned to a bound = the optimizer ran out of room, not a measurement
+        calib.pop("net_h_est", None)
+    else:
         base = np.median(np.abs(d[8]))
         swing = max(np.median(np.abs(line_dists(calib, {8: pix[8]}, nh + s)[8])) - base
                     for s in (-0.15, 0.15))
         if swing < 1.0:
             calib.pop("net_h_est", None)  # pose is fine, the height is not measured
-    else:
-        calib.pop("net_h_est", None)
     return calib, med
 
 
@@ -197,6 +200,11 @@ def _self_check():
     c2, med2 = solve_lines(_sample(onaxis, net_h), dict(onaxis, f=980.0))
     assert med2 < 0.5, f"on-axis solve failed: {med2:.2f}px"
     assert "net_h_est" not in c2, "unobservable net height reported anyway"
+
+    # net band segmented at a height outside the plausible range (mis-segmented
+    # onto a bleacher rail, say) pins the optimizer to its bound — not a reading
+    c3, _ = solve_lines(_sample(truth, 3.4), dict(truth, f=980.0))
+    assert "net_h_est" not in c3, f"bound-pinned height reported: {c3.get('net_h_est')}"
     print(f"lineseg self-check ok: {med:.4f}px, net_h {calib['net_h_est']}; "
           f"on-axis {med2:.4f}px, net height correctly withheld")
 

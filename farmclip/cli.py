@@ -38,7 +38,8 @@ def _calibrate_ai(clip: Path, out: Path, w: int, h: int, n_frames: int,
     from .calibrate import KEYPOINTS, draw_overlay, solve_web
 
     hits, ref = {}, None
-    for i, t, frame in video.read_frames(str(clip), step=max(1, int(n_frames // 10))):
+    for i, t, frame in video.read_frames(str(clip), step=max(1, int(n_frames // 10)),
+                                         seek=True):
         if ref is None:
             ref = (i, frame)
         if frames_out is not None:
@@ -145,7 +146,7 @@ def calibrate(clip: Path, out: Path):
     print("ai calibration failed, falling back to hough search")
     step = max(1, int(info_v["frames"] // 40))
     best = None
-    for i, t, frame in video.read_frames(str(clip), step=step):
+    for i, t, frame in video.read_frames(str(clip), step=step, seek=True):
         segs = detect_segments(frame)
 
         def slope(s):

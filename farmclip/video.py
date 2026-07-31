@@ -30,12 +30,31 @@ def clip_video(src: str | Path, dst: str | Path, start_s: float, end_s: float) -
     return dst
 
 
-def read_frames(path: str | Path, step: int = 1):
-    """Yield (frame_index, t_seconds, bgr_frame). step>1 skips frames."""
+def read_frames(path: str | Path, step: int = 1, seek: bool = False):
+    """Yield (frame_index, t_seconds, bgr_frame). step>1 skips frames.
+
+    seek=True jumps between samples instead of decoding and discarding the
+    frames in between — the difference between seconds and minutes when
+    sampling ~10 frames out of a full-match video. Seeks land on the nearest
+    keyframe, so the yielded index is where the decoder actually stopped, not
+    i*step; only use it when any frame near the target will do (calibration),
+    not when frame indices must line up with another stream (ball tracking).
+    """
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise RuntimeError(f"cannot open {path}")
     fps = cap.get(cv2.CAP_PROP_FPS)
+    if seek and step > 1:
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        for target in range(0, n, step):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+            ok, frame = cap.read()
+            if not ok:
+                break
+            i = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+            yield i, i / fps, frame
+        cap.release()
+        return
     i = 0
     while True:
         ok, frame = cap.read()
