@@ -1,54 +1,109 @@
 # GPU training handoff (icrn session)
 
-Context: farmclip auto-calibrates volleyball footage. Two models:
-- **v1 keypoints** (yolo11s-pose, 18 pts) — trained, deployed, works on seen
-  venues (mikasa 5.6/4.3px, beats manual) but hallucinates on unseen gyms.
-- **v2 line segmentation** (custom UNet, 9 classes: 7 floor lines + net band
-  + bg) — NEW, untrained. The bet: per-pixel line identity generalizes across
-  venues where point regression doesn't. See docs/plans/line-seg-calib.md.
+Context: farmclip auto-calibrates volleyball footage from named court
+keypoints. Two models:
 
-Datasets in this repo are FRESH (all 49 web images + 6 video runs, ~30 venues):
-- `out/finetune/lineseg/` — 174 train / 43 val images+masks (v2)
-- `out/finetune/court/`  — 188 train / 46 val YOLO pose (v1)
+- **court-pose keypoints** (yolo11s-pose, 18 pts) — v5 deployed. Excellent on
+  venues it has seen (dome venues 0.7-6.7px, beating hand-clicked anchors) but
+  thin on unseen ones: 3/12 unseen web images detected, and **zero keypoints**
+  on a head-on clip. Widening that distribution is this round's whole point.
+- **lineseg UNet** (9 classes: 7 floor lines + net band + bg) — v2 trained and
+  wired in. Correct on mikasa, wrong on most other venues. It is **downstream**
+  of the keypoints: its training masks are rendered *through* solved calibs, so
+  it can never be better than the calibs that trained it.
 
-## Primary job: train v2
+## This round's primary job: keypoints v6
 
-```
-python -m uv run python scripts/train_lineseg.py --device cuda --batch 8 --epochs 200
-```
-
-- Checkpoints: `finetune_out/lineseg/{last,best}.pt` (best = lowest val loss).
-- Healthy run: val loss falls steadily; per-class IoU printed per epoch —
-  floor-line classes should climb well above 0.3; if any class stays ~0 after
-  50 epochs, note it (net_band is thin and lags — that's normal early).
-- If val plateaus early, extend: rerun with `--epochs 400` (resumes from
-  last.pt if you pass `--resume finetune_out/lineseg/last.pt` — check the
-  script's flags with `--help`; if no resume flag exists, just train longer
-  from scratch, it's a small model).
-- ~2 min/epoch on a modest GPU at 960px.
-
-## Optional second job: refresh v1 (dataset doubled since its last train)
+Keypoints first, not lineseg, precisely because lineseg is a student of the
+calibs. Better clicks -> better keypoints -> better masks -> better lineseg.
 
 ```
 yolo pose train model=finetune_out/yolo11s-court.pt data=out/finetune/court/dataset.yaml \
   epochs=300 imgsz=1280 batch=16 optimizer=AdamW lr0=0.0003 mosaic=0 \
-  scale=0.3 translate=0.05 patience=50 device=0 project=finetune_out name=court-pose-v5
+  scale=0.3 translate=0.05 patience=50 device=0 project=finetune_out name=court-pose-v6
 ```
 
-Rules that exist for hard-won reasons: **mosaic=0 always** (NaN crashes on
-this data), keep imgsz=1280 (matches deployed ONNX), AdamW lr0=3e-4.
-Fix `out/finetune/court/dataset.yaml`'s absolute `path:` if the repo lives at
-a different path on the GPU box.
+Rules that exist for hard-won reasons: **mosaic=0 always** (NaN crashes on this
+data), keep `imgsz=1280` (matches the deployed ONNX), AdamW `lr0=3e-4`.
+Fix `out/finetune/court/dataset.yaml`'s absolute `path:` if the repo lives
+somewhere else on the GPU box.
+
+Export when done:
+
+```
+yolo export model=finetune_out/court-pose-v6/weights/best.pt format=onnx imgsz=1280
+```
+
+## What changed in the data since v5 - read this before judging results
+
+The dataset roughly doubled AND one systematic label bug was fixed. Both
+matter for interpreting v6 vs v5.
+
+1. **Left/right inversion, fixed.** `consistent_names()` renames clicks to
+   match the solved pose, and because the court is symmetric the solve is free
+   to pick the mirrored world assignment - it did so on **51 of 52** web
+   images, so every `_left` the human clicked was stored as `_right`. v5 was
+   trained on those inverted labels. `build_kp_dataset.py` now applies
+   `calibrate.canonical_lr()` after `consistent_names`, anchoring handedness on
+   a single-depth reference pair (net/antenna/centre), so `_left` always means
+   image-left. **v6 is the first model trained on correct handedness**, so a
+   v5-vs-v6 comparison is not apples to apples on any left/right metric.
+
+2. **Distribution widened deliberately.** v5's set was dominated by elevated
+   sideline views of large arenas. Added since: ~70 images from Wikimedia
+   Commons plus amateur YouTube VODs (school, club, rec, intramural), chosen
+   for camera *placement* variety - floor-level, behind-the-endline head-on,
+   corner/diagonal, and small gyms with basketball/badminton lines painted
+   through the court. Pro broadcast footage was deliberately excluded: it is
+   effectively one camera angle and deepens the existing bias.
+
+3. **Solver fixes that improved the labels feeding training.** `solve_web`'s
+   joint net refine could destroy a good floor solve (measured: a 0.6px floor
+   fit came back at 346px with net height pinned to a bound). It now keeps the
+   floor pose unless the refine holds up, and measures net height with the pose
+   frozen. Across 107 well-spread labelled images: median floor error **3.5px**,
+   100 under 10px, and net height independently measured on 100 venues with a
+   **median of 2.44 m** against a 2.43 m regulation net.
+
+## Optional second job: refresh lineseg
+
+Only worth running after v6 exists, and only after regenerating its masks -
+they are rendered through solved calibs and inherit calib error. The current
+masks include venues whose calibs were 15-30px off (menlo 30.3px, dome4
+15.7px), which is why that model learned misplaced lines.
+
+```
+python -m uv run python scripts/build_lineseg_dataset.py     # regenerate masks first
+python -m uv run python scripts/train_lineseg.py --device cuda --batch 8 --epochs 200
+```
+
+Checkpoints `finetune_out/lineseg/{last,best}.pt` (best = lowest val loss).
+~2 min/epoch at 960px. Per-class IoU prints each epoch; net_band is thin and
+lags early, that is normal.
 
 ## Bring back
 
 ```
-git add -f finetune_out/lineseg/best.pt            # required (v2)
-git add -f finetune_out/court-pose-v5/weights/best.pt   # if v1 refresh ran
-git add finetune_out/lineseg/*.csv finetune_out/court-pose-v5/results.csv 2>/dev/null
-git commit -m "feat(calib): v2 lineseg weights [+ v1 refresh]" && git push
+git add -f finetune_out/court-pose-v6/weights/best.pt
+git add -f finetune_out/yolo11s-court.onnx                  # if you exported
+git add finetune_out/court-pose-v6/results.csv
+git add -f finetune_out/lineseg/best.pt                     # if lineseg re-ran
+git commit -m "feat(calib): court-pose-v6 weights" && git push
 ```
 
-(`-f` needed: *.pt is gitignored.) The local session then builds v2 inference
-+ line-based solve (Phase 3 of the plan) and benchmarks v2 vs v1 on
-calib_eval — winner becomes the pipeline's first-choice path.
+(`-f` needed: `*.pt` is gitignored.)
+
+## How to judge the result
+
+Do **not** rank by reprojection error alone - it is gameable by sparsity and
+has already fooled us: a visibly wrong pose scored 1.34px while a correct one
+scored 1.89px, because fewer/shorter pieces of evidence fit any pose better.
+Use `farmclip/calib_score.py`, which scores *coverage* - what fraction of each
+projected line's length actually has image evidence - alongside error:
+
+```
+python -m uv run python -m farmclip.calib_score     # self-check
+```
+
+The real acceptance test is still the overlay: run the pipeline on a clip and
+look at `out/<run>/debug/calib_overlay.jpg` before calling anything done.
