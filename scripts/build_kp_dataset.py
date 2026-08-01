@@ -7,6 +7,7 @@ Usage: python -m uv run python scripts/build_kp_dataset.py
 """
 import json
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -123,8 +124,39 @@ for run, outdir, video in RUNS:
 
 # web-scraped stills labeled in calib.html image-batch mode
 webdir = ROOT / "out/webimgs"
-web_kept = 0
+
+
+def _source_map(pool):
+    """image stem -> source video id, from a pool's sources.txt."""
+    out = {}
+    sp = pool / "sources.txt"
+    if not sp.exists():
+        return out
+    for ln in sp.read_text(errors="replace").splitlines():
+        if "\t" not in ln:
+            continue
+        name, url = ln.split("\t")[:2]
+        m = re.search(r"v=([\w-]{11})|youtu\.be/([\w-]{11})", url)
+        vid = (m.group(1) or m.group(2)) if m else Path(url.split("&t=")[0].split("@")[0]).stem
+        out[Path(name).stem] = vid
+    return out
+
+
+# A held-out set is only held out if none of its VIDEOS are trained on. Frames
+# from a stationary camera are near-duplicates of each other, so one training
+# frame from a test venue leaks that venue's exact viewpoint. This was not
+# hypothetical: tallones-usav and tallones-vladimes were reserved as test
+# venues while 12 of their frames sat in the training pool from an earlier
+# session, which silently turned the whole target-PoV benchmark group into a
+# seen-venue score.
+TEST_SOURCES = set(_source_map(ROOT / "out/testimgs").values())
+WEB_SOURCES = _source_map(webdir)
+
+web_kept, web_leaked = 0, []
 for lp in sorted((webdir / "labels").glob("*.json")) if (webdir / "labels").exists() else []:
+    if WEB_SOURCES.get(lp.stem) in TEST_SOURCES:
+        web_leaked.append(f"{lp.stem} ({WEB_SOURCES[lp.stem]})")
+        continue
     imgp = next((p for e in (".jpg", ".jpeg", ".png") if (p := webdir / (lp.stem + e)).exists()), None)
     if imgp is None:
         print(f"[web] {lp.stem}: no image — skipping")
@@ -150,6 +182,9 @@ for lp in sorted((webdir / "labels").glob("*.json")) if (webdir / "labels").exis
     (OUT / "labels" / split / f"{name}.txt").write_text(label_line(ann, w, h) + "\n")
     kept_all.append((split, name, ann))
     web_kept += 1
+if web_leaked:
+    print(f"[web] EXCLUDED {len(web_leaked)} frame(s) whose video is in the held-out "
+          f"test set: {', '.join(web_leaked)}")
 if web_kept:
     print(f"[web] kept {web_kept}")
 
