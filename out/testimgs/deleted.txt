@@ -1,3 +1,6 @@
 test_001.jpg
 test_004.jpg
 test_005.jpg
+test_000.jpg
+test_013.jpg
+test_015.jpg
