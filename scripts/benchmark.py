@@ -179,9 +179,14 @@ def compare(gt: dict, cand: dict, w: int, h: int) -> dict:
 
 # --- methods: (frame, w, h, ctx) -> calib or None ---------------------------
 
+# Set by --model so a candidate checkpoint can be scored without being
+# deployed. Promotion should follow the benchmark, not precede it.
+KP_MODEL = "finetune_out/yolo11s-court.onnx"
+
+
 def m_v6b(frame, w, h, ctx):
     from farmclip.kp_detect import detect_keypoints
-    kp = detect_keypoints(frame)
+    kp = detect_keypoints(frame, model_path=KP_MODEL)
     ctx["n_kp"] = len(kp)
     if len(kp) < 4:
         return None
@@ -233,7 +238,13 @@ def main():
     ap.add_argument("--methods", default="v6b,lineseg,classical,search")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--no-overlays", action="store_true")
+    ap.add_argument("--model", help="keypoint ONNX to score (default: the deployed one)")
+    ap.add_argument("--tag", help="label for this model in the output")
     args = ap.parse_args()
+    if args.model:
+        global KP_MODEL
+        KP_MODEL = args.model
+        print(f"keypoint model: {KP_MODEL}")
     names = [n for n in args.methods.split(",") if n]
     bad = [n for n in names if n not in METHODS]
     if bad:
