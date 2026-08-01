@@ -34,6 +34,16 @@ import argparse
 _ap = argparse.ArgumentParser()
 _ap.add_argument("--venues", type=int, help="use only N source venues")
 _ap.add_argument("--seed", type=int, default=0, help="which N venues")
+_ap.add_argument("--max-per-venue", type=int, dest="cap", help=
+                 "cap frames contributed by ANY one venue. Without it the "
+                 "venue curve is uninterpretable: the five video runs carry "
+                 "8-41 frames each while web venues carry 1-3, so frame count "
+                 "moves in steps as a run venue enters the subset rather than "
+                 "with venue count. Measured on the uncapped sweep: v40->v60 "
+                 "added 18 venues and +108 run frames in ONE step (87->224 "
+                 "frames), while v60->v81 added 21 venues and zero. Cap at ~3 "
+                 "to match web density and the slope becomes a venue effect "
+                 "instead of a dataset-size effect.")
 _ap.add_argument("--out", default="court", help="subdir under data/dataset/")
 _ap.add_argument("--path", help="value for dataset.yaml's `path:` (default: this "
                                 "machine's absolute path). Set it to the GPU "
@@ -189,7 +199,10 @@ for run, outdir, video in RUNS:
               f"NOTHING. A dataset built without it is not comparable to one "
               f"built where the videos exist.")
         continue
-    step = max(1, video_info(video)["frames"] // 40)
+    # Sample toward the cap rather than taking the first N, so the frames stay
+    # spread across the clip instead of clustering at its start.
+    _target = ARGS.cap if ARGS.cap else 40
+    step = max(1, video_info(video)["frames"] // max(_target, 1))
     kept = dropped = 0
     for i, t, frame in read_frames(video, step=step):
         if calib is None:
@@ -203,6 +216,8 @@ for run, outdir, video in RUNS:
         if not ok:
             dropped += 1
             continue
+        if ARGS.cap and kept >= ARGS.cap:
+            break
         split = "val" if n_kept % 5 == 4 else "train"
         n_kept += 1
         name = f"{run}_{i:05d}"
@@ -214,12 +229,18 @@ for run, outdir, video in RUNS:
     print(f"[{run}] kept {kept} dropped {dropped}")
 
 web_kept, web_leaked = 0, []
+_per_venue = {}
 for lp in sorted((webdir / "labels").glob("*.json")) if (webdir / "labels").exists() else []:
     if WEB_SOURCES.get(lp.stem) in TEST_SOURCES:
         web_leaked.append(f"{lp.stem} ({WEB_SOURCES[lp.stem]})")
         continue
     if WEB_SOURCES.get(lp.stem) not in VENUES:
         continue
+    if ARGS.cap:
+        _v = WEB_SOURCES.get(lp.stem)
+        if _per_venue.get(_v, 0) >= ARGS.cap:
+            continue
+        _per_venue[_v] = _per_venue.get(_v, 0) + 1
     imgp = next((p for e in (".jpg", ".jpeg", ".png") if (p := webdir / (lp.stem + e)).exists()), None)
     if imgp is None:
         print(f"[web] {lp.stem}: no image — skipping")
