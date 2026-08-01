@@ -1,0 +1,70 @@
+{
+ "corner_far_right": [
+  473,
+  329.5
+ ],
+ "corner_far_left": [
+  968,
+  317.5
+ ],
+ "corner_near_left": [
+  1072,
+  495.5
+ ],
+ "attack_far_right": [
+  395,
+  355.5
+ ],
+ "attack_far_left": [
+  982,
+  349.5
+ ],
+ "attack_near_right": [
+  226,
+  410.5
+ ],
+ "attack_near_left": [
+  1009,
+  394.5
+ ],
+ "center_right": [
+  310,
+  383.5
+ ],
+ "center_left": [
+  998,
+  368.5
+ ],
+ "antenna_tip_left": [
+  290,
+  149.5
+ ],
+ "antenna_tip_right": [
+  982,
+  119.5
+ ],
+ "net_top_left": [
+  294,
+  198.5
+ ],
+ "net_top_right": [
+  987,
+  177.5
+ ],
+ "post_top_left": [
+  211,
+  205.5
+ ],
+ "post_top_right": [
+  1084,
+  172.5
+ ],
+ "post_base_left": [
+  216,
+  385.5
+ ],
+ "post_base_right": [
+  1083,
+  369.5
+ ]
+}

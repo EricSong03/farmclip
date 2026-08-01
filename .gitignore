@@ -1,18 +1,22 @@
 .claude/settings.local.json
-out/
+/out/
+# data/ is deliberately NOT ignored. Directory patterns above are ANCHORED
+# (leading /) so they cannot match a same-named directory inside data/ --
+# an unanchored `runs/` silently swallowed data/runs/ once already.
+# scripts/check_data.py fails if anything under data/ is ignored.
 # data/ is deliberately NOT ignored. Labelled images, annotations and the built
 # dataset used to live under out/ and were force-added one by one, so anything
 # new was invisible to `git status` -- which is how a whole round of training
 # frames, and the run annotations for four venues, were never committed at all.
-vendor/
+/vendor/
 .venv/
 *.pt
 examples/*.mp4
 examples/samples/**/clip.mp4
 __pycache__/
-player_dataset/
-runs/
-finetune_out/
+/player_dataset/
+/runs/
+/finetune_out/
 .ipynb_checkpoints/
 *-checkpoint.*
 
@@ -22,7 +26,7 @@ court/images/
 court/testimgs/*.jpg
 court/_quarantine/
 *.cache
-court_clips/
+/court_clips/
 
 # Venue-count ablation splits: regenerable from the pool with a seeded command
 # (build_kp_dataset.py --venues N --seed S --out court_vN), and each is a full
