@@ -250,3 +250,53 @@ def search(segs, attack_near, net_band, w, h, verbose=False):
                     if verbose:
                         print("new best", best_info)
     return best, best_info
+
+
+def solve_frame(frame, w: int, h: int):
+    """One still -> (calib, info) via Hough segments, or (None, None).
+
+    The whole classical path for a single frame: pick the near attack line and
+    the net band out of detect_segments, hypothesise the rest, polish, and fall
+    back to the head-on solver. cli.calibrate scores these across frames; the
+    benchmark scores them against ground truth. Same code either way.
+    """
+    from .lines import detect_segments
+    from .refine_lsq import polish
+
+    segs = detect_segments(frame)
+
+    def slope(s):
+        return abs(s[3] - s[1]) / max(abs(s[2] - s[0]), 1)
+
+    def ymid(s):
+        return (s[1] + s[3]) / 2
+
+    low = [s for s in segs if slope(s) < 0.15 and ymid(s) > h * 0.6]
+    band = [s for s in segs if slope(s) < 0.1 and h * 0.25 < ymid(s) < h * 0.45
+            and abs(s[2] - s[0]) > w * 0.45]
+    if not band:
+        return None, None
+    # the net has TWO long parallel bands; net top = the one with a partner
+    # 20-80px BELOW it (else the longest wins the tie)
+    paired = [s for s in band
+              if any(20 < ymid(o) - ymid(s) < 80 for o in band if o is not s)]
+    pool = paired or band
+    net_band = min(pool, key=ymid) if paired else max(band, key=lambda s: abs(s[2] - s[0]))
+
+    calib = info = None
+    if low:
+        attack_near = max(low, key=lambda s: abs(s[2] - s[0]))
+        calib, info = search(segs, attack_near, net_band, w, h)
+        if calib is not None:
+            floor_pairs = [
+                (attack_near, ((ATTACK, 0, -HW), (ATTACK, 0, +HW))),
+                (info["segL"], ((-HL, 0, +HW), (HL, 0, +HW))),
+                (info["segR"], ((-HL, 0, -HW), (HL, 0, -HW))),
+                (info["segF"], FAR_LINES[info["far"]]),
+            ]
+            calib = polish(calib, floor_pairs, band_seg=net_band)
+    if calib is None:  # head-on fallback: net plane + posts anchor
+        calib, info = search_headon(segs, net_band, w, h)
+    if calib is None:
+        return None, None
+    return calib, info

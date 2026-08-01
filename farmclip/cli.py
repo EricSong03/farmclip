@@ -143,12 +143,8 @@ def _calibrate_lineseg(out: Path, frames: list, init: dict,
 
 def calibrate(clip: Path, out: Path):
     """Auto-calibration: AI keypoints -> line-segmentation refine, else Hough."""
-    from .lines import detect_segments
-    from .hypothesis import search
-    from .refine_lsq import polish
     from .calibrate import draw_overlay
-    from .court import HL, HW, ATTACK, NET_H
-    from .hypothesis import FAR_LINES
+    from .hypothesis import solve_frame
 
     info_v = video.video_info(clip)
     w, h = info_v["width"], info_v["height"]
@@ -166,40 +162,7 @@ def calibrate(clip: Path, out: Path):
     step = max(1, int(info_v["frames"] // 40))
     best = None
     for i, t, frame in video.read_frames(str(clip), step=step, seek=True):
-        segs = detect_segments(frame)
-
-        def slope(s):
-            return abs(s[3] - s[1]) / max(abs(s[2] - s[0]), 1)
-
-        low = [s for s in segs if slope(s) < 0.15 and (s[1] + s[3]) / 2 > h * 0.6]
-        band = [s for s in segs if slope(s) < 0.1 and h * 0.25 < (s[1] + s[3]) / 2 < h * 0.45
-                and abs(s[2] - s[0]) > w * 0.45]
-        if not band:
-            continue
-        # the net has TWO long parallel bands; net top = the one with a partner
-        # 20-80px BELOW it (else the longest wins the tie)
-        def ymid(s):
-            return (s[1] + s[3]) / 2
-
-        paired = [s for s in band
-                  if any(20 < ymid(o) - ymid(s) < 80 for o in band if o is not s)]
-        pool = paired or band
-        net_band = min(pool, key=ymid) if paired else max(band, key=lambda s: abs(s[2] - s[0]))
-        calib = None
-        if low:
-            attack_near = max(low, key=lambda s: abs(s[2] - s[0]))
-            calib, info = search(segs, attack_near, net_band, w, h)
-            if calib is not None:
-                floor_pairs = [
-                    (attack_near, ((ATTACK, 0, -HW), (ATTACK, 0, +HW))),
-                    (info["segL"], ((-HL, 0, +HW), (HL, 0, +HW))),
-                    (info["segR"], ((-HL, 0, -HW), (HL, 0, -HW))),
-                    (info["segF"], FAR_LINES[info["far"]]),
-                ]
-                calib = polish(calib, floor_pairs, band_seg=net_band)
-        if calib is None:  # head-on fallback: net plane + posts anchor
-            from .hypothesis import search_headon
-            calib, info = search_headon(segs, net_band, w, h)
+        calib, info = solve_frame(frame, w, h)
         if calib is None:
             continue
         score = (info["n_inliers"], -calib["err"])
