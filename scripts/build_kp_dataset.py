@@ -60,8 +60,20 @@ def label_line(ann, w, h):
     return "0 " + " ".join(f"{v:.6f}" for v in box + kps)
 
 
+# Wipe before writing. This script only ever ADDED files, so anything a later
+# run excluded stayed on disk -- and dataset.yaml points at the DIRECTORY, so
+# training consumed it regardless of what this script reported. Measured at the
+# time this was found: the builder reported 125 web images and the directory
+# held 160, the extra 35 being frames deleted during labelling, frames rejected
+# by the quality gates, and the 12 leaked test-venue frames. Every model
+# trained here had been fed images its own gates had rejected.
 for sub in ("images/train", "images/val", "labels/train", "labels/val"):
-    (OUT / sub).mkdir(parents=True, exist_ok=True)
+    p = OUT / sub
+    if p.exists():
+        for f in p.iterdir():
+            if f.is_file():
+                f.unlink()
+    p.mkdir(parents=True, exist_ok=True)
 
 kept_all, n_kept = [], 0
 for run, outdir, video in RUNS:
