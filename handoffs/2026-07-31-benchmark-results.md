@@ -141,12 +141,31 @@ set the thing that decides whether either worked.
    noise. Their old clicks are parked in `out/testimgs/labels_rejected/`;
    `calib.html` requeues an image as soon as its label is out of
    `out/testimgs/labels/`.
-2. **Then retrain, and judge it here.** 211 images across 6 venues is thin for
-   footage this varied, and the diagnostic above says more/broader data is the
-   lever — not another post-hoc correction. Scrape more venues into
-   `out/webimgs` (`scripts/web_frames.py`, `scripts/yt_frames.py`), rebuild,
-   retrain, and score against `scripts/benchmark.py`. Anything that does not
-   move the pass count off 0/N did not work, whatever its val loss says.
+2. **Then retrain — but weight the new data by ANGLE, not by venue count.**
+   Splitting the test set by solved camera geometry:
+
+   | camera | test frames | v6b median | training frames |
+   |---|---|---|---|
+   | end-on (behind the end line, ~1.5 m) | 4 | **103px** | 79 (72%) |
+   | side-on (level with the net, ~5–6 m) | 7 | **395px** | 31 (28%) |
+
+   A 3.8× gap that lines up with training representation. Venue identity
+   explains much less: frames from the SAME VOD — same floor, same lighting,
+   same markings — vary by up to 2.3× (`w2qR0cHw4kk`: 163px and 332px), so if
+   the venue were the dominant factor those pairs would cluster and they do
+   not.
+
+   Caveat worth keeping honest: side-on frames are also further away (17–25 m
+   vs 10–14 m) and wider, so angle and scale are confounded here and this test
+   set cannot separate them. And *both* categories fail — 103px against a 20px
+   bar is not a near miss. So angle is the bigger axis, not the only problem.
+
+   Practical consequence: scraping more venues shot end-on will not fix the
+   side-on case, and side-on elevated is the standard pro broadcast camera —
+   the configuration that matters most for the target footage. Bias the scrape
+   (`scripts/web_frames.py`, `scripts/yt_frames.py`) toward it, rebuild,
+   retrain, and score here. Anything that does not move the pass count off 0/N
+   did not work, whatever its val loss says.
 3. **Keep `court_search` in the picture.** It is untrained, so it cannot have a
    generalisation gap, and it was fighting an inverted template until the flip.
    It still lands in the wrong basin from a blind start (496px), which its own
