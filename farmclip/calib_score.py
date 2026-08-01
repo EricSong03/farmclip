@@ -35,8 +35,9 @@ from .calibrate import project
 from .court import ATTACK, HL, HW, NET_H
 
 MODEL = {
-    "side_left": ((-HL, 0, -HW), (HL, 0, -HW)),
-    "side_right": ((-HL, 0, HW), (HL, 0, HW)),
+    # left = +Z = image-left (court.py convention)
+    "side_left": ((-HL, 0, HW), (HL, 0, HW)),
+    "side_right": ((-HL, 0, -HW), (HL, 0, -HW)),
     "end_far": ((-HL, 0, -HW), (-HL, 0, HW)),
     "end_near": ((HL, 0, -HW), (HL, 0, HW)),
     "attack_far": ((-ATTACK, 0, -HW), (-ATTACK, 0, HW)),

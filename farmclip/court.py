@@ -53,16 +53,16 @@ KEYPOINTS = {
 
 # Court line segments as 3D point pairs, for overlay rendering.
 LINES = [
-    ((-HL, 0, -HW), (+HL, 0, -HW)),  # left sideline
-    ((-HL, 0, +HW), (+HL, 0, +HW)),  # right sideline
+    ((-HL, 0, -HW), (+HL, 0, -HW)),  # right sideline (-Z = image-right)
+    ((-HL, 0, +HW), (+HL, 0, +HW)),  # left sideline
     ((-HL, 0, -HW), (-HL, 0, +HW)),  # far end line
     ((+HL, 0, -HW), (+HL, 0, +HW)),  # near end line
     ((0, 0, -HW), (0, 0, +HW)),      # center line
     ((-ATTACK, 0, -HW), (-ATTACK, 0, +HW)),  # far attack line
     ((+ATTACK, 0, -HW), (+ATTACK, 0, +HW)),  # near attack line
     ((0, NET_H, -HW), (0, NET_H, +HW)),      # net top band
-    ((0, 0, -NET_W / 2), (0, NET_H + 0.12, -NET_W / 2)),  # left post
-    ((0, 0, +NET_W / 2), (0, NET_H + 0.12, +NET_W / 2)),  # right post
+    ((0, 0, -NET_W / 2), (0, NET_H + 0.12, -NET_W / 2)),  # right post
+    ((0, 0, +NET_W / 2), (0, NET_H + 0.12, +NET_W / 2)),  # left post
 ]
 
 
