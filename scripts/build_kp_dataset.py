@@ -35,6 +35,9 @@ _ap = argparse.ArgumentParser()
 _ap.add_argument("--venues", type=int, help="use only N source venues")
 _ap.add_argument("--seed", type=int, default=0, help="which N venues")
 _ap.add_argument("--out", default="court", help="subdir under data/dataset/")
+_ap.add_argument("--path", help="value for dataset.yaml's `path:` (default: this "
+                                "machine's absolute path). Set it to the GPU "
+                                "box's mount so the yaml needs no hand-editing.")
 ARGS = _ap.parse_args()
 
 ROOT = Path(__file__).parent.parent
@@ -248,8 +251,9 @@ flip_idx = [NAMES.index(n.replace("_left", "_R").replace("_right", "_left").repl
             for n in NAMES]
 print("flip_idx:", {NAMES[i]: NAMES[j] for i, j in enumerate(flip_idx)})
 
+_yaml_path = ARGS.path or OUT.resolve().as_posix()
 (OUT / "dataset.yaml").write_text(
-    f"path: {OUT.resolve().as_posix()}\ntrain: images/train\nval: images/val\n"
+    f"path: {_yaml_path}\ntrain: images/train\nval: images/val\n"
     f"kpt_shape: [18, 3]\nflip_idx: {flip_idx}\nnames:\n  0: court\n")
 (OUT / "kpt_names.json").write_text(json.dumps(NAMES, indent=1))
 
