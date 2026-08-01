@@ -16,7 +16,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from farmclip.calibrate import draw_overlay, solve_labeled
-from farmclip.court import KEYPOINTS
+from farmclip.court import KEYPOINTS, depth_span, width_span
 
 
 def floor_spread_ok(ann):
@@ -55,20 +55,6 @@ def worst_click(ann, w, h, err, trigger=15.0, ratio=0.3):
             best = (k, e)
     return best if best and best[1] < err * ratio else None
 
-
-def depth_span(ann):
-    """Metres of COURT LENGTH the clicks cover (world X). The other degeneracy.
-
-    Points bunched at one end leave focal length and camera distance trading
-    off almost exactly, so the solve slides to the focal clamp and returns a
-    confident-looking but wrong pose. Measured on a real label set: points at
-    x=0 and x=+3 only -> 78.8px err with f pinned at the 3.5*w bound; adding a
-    single far-end point (x=-9) -> 8.9px and f free at 1947. Image-plane
-    spread (floor_spread_ok) does NOT catch this — those clicks looked well
-    spread on screen.
-    """
-    xs = [KEYPOINTS[k][0] for k in ann if k in KEYPOINTS]
-    return (max(xs) - min(xs)) if xs else 0.0
 
 ROOT = Path(__file__).parent.parent
 # Both pools: out/webimgs is training, out/testimgs is the held-out benchmark.
@@ -123,6 +109,14 @@ while True:
               elif bad:
                   color = (0, 0, 255)
                   verdict = f"BAD POINT: {bad[0]} (without it {bad[1]:.1f}px)"
+              elif width_span(ann) < 4.0:
+                  # every click in one vertical plane (one sideline, or the net
+                  # and a sideline on the same side). The pose is not
+                  # determined, and the residual will look GREAT anyway -- the
+                  # three worst frames in the held-out set scored 0.4-1.9px.
+                  color = (0, 0, 255)
+                  verdict = ("ONE SIDELINE ONLY - pose undetermined despite the "
+                             "low error. Click the OTHER sideline.")
               elif span < 8.0:  # under ~half the court's length: focal/depth degenerate
                   color = (0, 165, 255)
                   verdict = (f"SHALLOW ({span:.0f}m of court) - click the FAR end "

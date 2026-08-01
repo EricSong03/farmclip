@@ -69,3 +69,34 @@ LINES = [
 def keypoint_array(names):
     """3D coords for the given keypoint names as float32 (N,3)."""
     return np.array([KEYPOINTS[n] for n in names], dtype=np.float32)
+
+
+def depth_span(clicks) -> float:
+    """Metres of court LENGTH (world X) a set of named clicks covers.
+
+    Points bunched at one end leave focal length and camera distance trading
+    off almost exactly, so the solve slides to the focal clamp and returns a
+    confident-looking wrong pose. Measured: clicks at x=0 and x=+3 only ->
+    78.8px with f pinned at the 3.5*w bound; adding one far-end point (x=-9)
+    -> 8.9px with f free. Image-plane spread does NOT catch this.
+    """
+    xs = [KEYPOINTS[k][0] for k in clicks if k in KEYPOINTS]
+    return (max(xs) - min(xs)) if xs else 0.0
+
+
+def width_span(clicks) -> float:
+    """Metres of court WIDTH (world Z) a set of named clicks covers.
+
+    Zero means every click sits in ONE vertical plane -- one sideline, or the
+    net, or both if they share a side. That does not constrain a pose at all:
+    PnP picks a member of a family of solutions and reports a tiny residual for
+    whichever it landed on. Measured on the held-out test set, the three
+    single-plane labellings fit their clicks at 1.9 / 0.4 / 1.5px -- the LOWEST
+    residuals in the whole set -- and projected courts that missed the paint
+    entirely. A low residual is not evidence of a correct pose.
+
+    Image-plane spread checks miss it because a sideline runs diagonally across
+    the frame, so the clicks look perfectly well spread on screen.
+    """
+    zs = [KEYPOINTS[k][2] for k in clicks if k in KEYPOINTS]
+    return (max(zs) - min(zs)) if zs else 0.0
