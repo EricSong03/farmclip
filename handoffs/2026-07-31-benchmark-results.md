@@ -67,8 +67,10 @@ gates them and prints why:
   the paint entirely. **Fix: click the other sideline.**
 - `test_012` — 6 m of depth span, so focal and distance trade off exactly.
   **Fix: click the far end of the court.**
-- `test_009` — floor fits, net 73px off. Re-solving under each naming shows
-  **the L/R flip puts it on the paint: press `g` in `calib.html`.**
+- ~~`test_009` — press `g`~~ **Withdrawn.** That call came from the buggy
+  single-colour `floor_mask`; with the mask fixed, as-clicked beats the L/R
+  flip on every measure (10.6px vs 113.6px residual, coverage 0.71 vs 0.62).
+  The frame is fine and is now in the set.
 - `test_014` — 8 clicks, full depth and width span, 10.4px residual, and the
   overlay is still wrong on two independent visual reads. No naming flip
   rescues it, so the clicks themselves are misplaced. **Fix: relabel from
@@ -192,3 +194,48 @@ against itself (0.0px) and against its Z-mirror, which projects the symmetric
 court to nearly the same pixels. The mirror must fail — 283px / 4.8 m. If that
 assertion ever passes the mirror, the harness has stopped measuring the one
 thing it was built to catch.
+
+---
+
+## Update, 2026-08-01: the target-PoV set changes the picture
+
+After labelling the 12 new held-out frames (usav, vladimes -- both venues
+absent from training), the benchmark has 22 usable ground-truth frames and
+splits cleanly:
+
+| group | n | median kp_px | median floor_m | pass | best |
+|---|---|---|---|---|---|
+| **target PoV** (tallones, low end/side-on) | 10 | **24.2px** | **0.50m** | 3/10 | 14.3px |
+| broadcast (older web VODs, elevated side-on) | 12 | 266.3px | 11.55m | 0/12 | 79.6px |
+
+An 11x gap, and the first passes this project has ever recorded: test_023
+(15.4px / 0.45m), test_024 (14.3px / 0.83m), test_031 (15.5px / 0.23m).
+
+Read that carefully: **v6b was trained without a single tallones frame**, so
+24px on unseen tallones venues is the untuned baseline for the PoV that
+matters. Sub-metre floor error across the whole group. It is borderline against
+the 20px bar rather than hopeless, which is a different problem from the one
+this document opened with.
+
+The earlier "no method is close" conclusion stands only for elevated broadcast
+footage, which is not the target.
+
+### A third measurement bug, same family as the first two
+
+`calib_score` scored the NET against `line_dt`, which masks to the floor on
+purpose -- so the one model line that is deliberately off the floor plane could
+only be judged when the mask happened to spill over it. On test_030 a GT pose
+whose net band visibly lies along the real net had 0% of that band inside the
+mask and was scored 240px off; frames where the mask did cover it scored 0.0px.
+Same pose quality, opposite verdicts, decided by luck. It rejected 6 of the 12
+new frames.
+
+The net now reports None -- unjudgeable -- when it lies clear of the evidence,
+and callers must treat that as "no information" rather than "wrong". Scoring it
+on unmasked Canny edges instead was tried and is worse: a cluttered hall puts
+an edge near anything, and a known-bad pose scored 0.95px.
+
+That is three metric bugs in this file's short life, all of the same shape: a
+proxy answering confidently where it had no evidence. The gate is now geometric
+first (physical camera, residual, depth and width span) and evidence-based only
+as a veto.

@@ -33,6 +33,7 @@ import numpy as np
 
 from .calibrate import project
 from .court import ATTACK, HL, HW, NET_H
+from .lines import floor_mask
 
 MODEL = {
     # left = +Z = image-left (court.py convention)
@@ -97,6 +98,22 @@ def _support(p, q, dt, near=4.0, step=3.0):
     return float((d <= near).mean()), float(np.median(d)), int(inside.sum())
 
 
+def _over_mask(p, q, mask, frac=0.5):
+    """Does the segment p->q lie over the evidence mask enough to be judged?
+
+    Guards the net line: line_dt only holds evidence on the floor, so a net
+    band projected clear of the mask has nothing to be measured against.
+    """
+    pts = p + (q - p) * np.linspace(0, 1, 60)[:, None]
+    h, w = mask.shape
+    x = np.round(pts[:, 0]).astype(int)
+    y = np.round(pts[:, 1]).astype(int)
+    inside = (x >= 0) & (x < w) & (y >= 0) & (y < h)
+    if inside.sum() < 8:
+        return False
+    return bool((mask[y[inside], x[inside]] > 0).mean() >= frac)
+
+
 def score(img, calib, net_h=None):
     """Per-line support for a calibration on one frame.
 
@@ -104,6 +121,20 @@ def score(img, calib, net_h=None):
     net_h shifts the net line to its measured height (regulation if None).
     """
     dt = line_dt(img)
+    # The net is the ONLY model line off the floor plane, and line_dt masks to
+    # the floor on purpose. So the net can only be judged when the floor mask
+    # happens to spill over it -- otherwise there is no evidence there at all,
+    # and _support reports that ABSENCE as a huge error. Measured on
+    # out/testimgs/test_030: a GT pose whose net band visibly lies along the
+    # real net had 0% of that band inside the mask and scored 240px off, while
+    # frames where the mask did cover the net scored 0.0px. Same pose quality,
+    # opposite verdicts, decided by luck.
+    #
+    # "No evidence" is not "wrong", so say so: the net comes back None and the
+    # caller must treat that as unjudgeable. Scoring it on unmasked Canny edges
+    # instead was tried and is worse -- a cluttered hall puts an edge near
+    # anything, and a known L/R-flipped pose scored 0.95px.
+    fmask = floor_mask(img)
     dy = 0.0 if net_h is None else net_h - NET_H
     out, covs, errs = {}, [], []
     for name, (a, b) in MODEL.items():
@@ -111,6 +142,9 @@ def score(img, calib, net_h=None):
             a, b = (a[0], a[1] + dy, a[2]), (b[0], b[1] + dy, b[2])
         uv = project(calib, [a, b])
         if not np.isfinite(uv).all():
+            out[name] = {"coverage": None, "err": None}
+            continue
+        if name == "net" and not _over_mask(uv[0], uv[1], fmask):
             out[name] = {"coverage": None, "err": None}
             continue
         r = _support(uv[0], uv[1], dt)

@@ -97,7 +97,10 @@ def gt_reject(clicks: dict, gt: dict, frame) -> str | None:
     from farmclip.calib_score import score
     s = score(frame, gt, gt.get("net_h_est"))
     net = s["lines"]["net"]
-    if net["err"] is None or net["err"] > 15.0:
+    # net err None = the band lies clear of the floor evidence mask, so there
+    # is nothing to measure it against. Unjudgeable is not failure; the
+    # coverage check below still has to pass either way.
+    if net["err"] is not None and net["err"] > 15.0:
         return f"net {net['err']}px off the band (floor fits, height/focal wrong)"
     # 0.50 is calibrated against visual inspection, not chosen a priori:
     # test_016 (0.55) and test_021 (0.72) are confirmed correct by eye and must
