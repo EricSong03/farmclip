@@ -181,6 +181,14 @@ for run, outdir, video in RUNS:
         print(f"[{run}] ref median {ref_med}")
     else:
         print(f"[{run}] no calib.json — drift gate off, keeping all sampled frames")
+    if not video.exists():
+        # videos/ is untracked and mostly absent on other machines, so a clone
+        # silently builds a web-only dataset that is NOT comparable to one built
+        # here. Say so loudly rather than producing a quietly different split.
+        print(f"[{run}] VIDEO MISSING ({video.name}) - this run contributes "
+              f"NOTHING. A dataset built without it is not comparable to one "
+              f"built where the videos exist.")
+        continue
     step = max(1, video_info(video)["frames"] // 40)
     kept = dropped = 0
     for i, t, frame in read_frames(video, step=step):
