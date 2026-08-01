@@ -77,11 +77,27 @@ def floor_mask(frame, k=5, close=25):
     small = cv2.resize(frame, (w // 4, h // 4))
     lab = cv2.cvtColor(small, cv2.COLOR_BGR2Lab).reshape(-1, 3).astype(np.float32)
     crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+    # Seeded: KMEANS_PP_CENTERS draws from OpenCV's global RNG, so this mask —
+    # and therefore calib_score, court_search's cost map and every stripe
+    # detection — used to change run to run. Measured on out/testimgs/test_008:
+    # the SAME pose scored net error 0.95px and 76.58px on consecutive calls,
+    # i.e. pass and fail. Any "measured" comparison taken before this seed was
+    # partly reading the RNG.
+    cv2.setRNGSeed(0)
     _, lbl, _ = cv2.kmeans(lab, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
     lbl = lbl.reshape(small.shape[:2])
     bottom = lbl[int(lbl.shape[0] * 0.66):]
-    winner = np.bincount(bottom.ravel(), minlength=k).argmax()
-    m = (lbl == winner).astype(np.uint8) * 255
+    # Keep EVERY substantial colour of the lower frame, not just the dominant
+    # one. A coloured court inside a contrasting apron is the norm in broadcast
+    # volleyball, and argmax keeps only one of the two. Measured on
+    # out/testimgs: a red-court/teal-apron frame masked 11% of the frame where
+    # single-tone floors mask 38-57%, which deleted the court's own lines from
+    # the evidence map and made calib_score reject a visibly CORRECT pose.
+    share = np.bincount(bottom.ravel(), minlength=k) / bottom.size
+    keep = np.flatnonzero(share >= 0.20)
+    if not len(keep):
+        keep = [int(share.argmax())]
+    m = np.isin(lbl, keep).astype(np.uint8) * 255
     m = cv2.resize(m, (w, h), interpolation=cv2.INTER_NEAREST)
     # close over players/shadows, then keep only the largest blob
     m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((close, close), np.uint8))
@@ -282,8 +298,16 @@ def _self_check():
     got, _ = detect_line_objects(stripe)
     assert got, "region-grow missed the straight stripe"
     assert not detect_line_objects(blob)[0], "accepted a disc/arc as a line"
+
+    # floor_mask must be reproducible: its k-means used to read OpenCV's global
+    # RNG, which made every score built on it (calib_score, court_search) vary
+    # between identical runs.
+    noisy = np.random.default_rng(0).integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    assert np.array_equal(floor_mask(noisy), floor_mask(noisy)), \
+        "floor_mask is not deterministic"
+
     print(f"lines self-check ok: stripe {s:.0f} > 12 > step {e:.0f}, "
-          f"{len(segs)} segment(s) on the synthetic line")
+          f"{len(segs)} segment(s) on the synthetic line, floor_mask deterministic")
 
 
 def intersect(seg_a, seg_b):
