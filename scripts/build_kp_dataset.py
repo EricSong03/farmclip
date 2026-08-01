@@ -4,6 +4,15 @@ Stationary camera => one annotated ref frame labels every frame of its clip.
 Sample ~40 frames per run, drop drifted ones (calib_eval.score_frame vs ref),
 write ultralytics pose images/labels + dataset.yaml.
 Usage: python -m uv run python scripts/build_kp_dataset.py
+       ... --venues 20 --seed 1 --out court_v20   (venue-count ablation)
+
+--venues builds from a random subset of N SOURCE VENUES rather than N images.
+Venues, not images, because frames from one stationary camera are near
+duplicates: 40 frames of dome1 are one viewpoint forty times, so an
+image-count curve would measure the wrong axis. Train a model per N, score
+each with scripts/benchmark.py, and the curve says whether more venues still
+buys accuracy or whether it has flattened -- which is the question "do we need
+more data" actually reduces to.
 """
 import json
 import random
@@ -20,6 +29,14 @@ from farmclip.court import KEYPOINTS
 from farmclip.video import video_info, read_frames
 from calib_eval import score_frame
 
+import argparse
+
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--venues", type=int, help="use only N source venues")
+_ap.add_argument("--seed", type=int, default=0, help="which N venues")
+_ap.add_argument("--out", default="court", help="subdir under data/dataset/")
+ARGS = _ap.parse_args()
+
 ROOT = Path(__file__).parent.parent
 if (ROOT / "data/runs.json").exists():
     # labels/ not dir/: annotations, calib and the ref frame are tracked data
@@ -30,7 +47,7 @@ if (ROOT / "data/runs.json").exists():
 else:  # fallback: pre-runs.json layout
     RUNS = [("menlo", ROOT / "out", ROOT / "videos/clip.mp4"),
             ("mikasa", ROOT / "out/mikasa", ROOT / "videos/mikasa.mp4")]
-OUT = ROOT / "data/dataset/court"
+OUT = ROOT / "data/dataset" / ARGS.out
 NAMES = list(KEYPOINTS)  # canonical 18-slot order
 
 
@@ -78,8 +95,56 @@ for sub in ("images/train", "images/val", "labels/train", "labels/val"):
                 f.unlink()
     p.mkdir(parents=True, exist_ok=True)
 
+# web-scraped stills labeled in calib.html image-batch mode
+webdir = ROOT / "data/pool"
+
+
+def _source_map(pool):
+    """image stem -> source video id, from a pool's sources.txt."""
+    out = {}
+    sp = pool / "sources.txt"
+    if not sp.exists():
+        return out
+    for ln in sp.read_text(errors="replace").splitlines():
+        if "\t" not in ln:
+            continue
+        name, url = ln.split("\t")[:2]
+        m = re.search(r"v=([\w-]{11})|youtu\.be/([\w-]{11})", url)
+        vid = (m.group(1) or m.group(2)) if m else Path(url.split("&t=")[0].split("@")[0]).stem
+        out[Path(name).stem] = vid
+    return out
+
+
+# A held-out set is only held out if none of its VIDEOS are trained on. Frames
+# from a stationary camera are near-duplicates of each other, so one training
+# frame from a test venue leaks that venue's exact viewpoint. This was not
+# hypothetical: tallones-usav and tallones-vladimes were reserved as test
+# venues while 12 of their frames sat in the training pool from an earlier
+# session, which silently turned the whole target-PoV benchmark group into a
+# seen-venue score.
+TEST_SOURCES = set(_source_map(ROOT / "data/test").values())
+WEB_SOURCES = _source_map(webdir)
+
+
+# ---- venue selection -------------------------------------------------------
+# Only venues that actually contribute a LABELLED image count. sources.txt
+# also lists frames staged but not yet clicked, and sampling those would
+# silently shrink the split instead of holding venue count constant.
+_labelled = {q.stem for q in (webdir / "labels").glob("*.json")}
+ALL_VENUES = sorted({v for k, v in WEB_SOURCES.items()
+                     if k in _labelled and v not in TEST_SOURCES}
+                    | {r[0] for r in RUNS})
+if ARGS.venues:
+    _rng = random.Random(ARGS.seed)
+    VENUES = set(_rng.sample(ALL_VENUES, min(ARGS.venues, len(ALL_VENUES))))
+    print(f"[ablation] {len(VENUES)} of {len(ALL_VENUES)} venues, seed {ARGS.seed}")
+else:
+    VENUES = set(ALL_VENUES)
+
 kept_all, n_kept = [], 0
 for run, outdir, video in RUNS:
+    if run not in VENUES:
+        continue
     if not (outdir / "annotations.json").exists():
         print(f"[{run}] no annotations.json — skipping (label it in calib.html)")
         continue
@@ -137,40 +202,12 @@ for run, outdir, video in RUNS:
         kept += 1
     print(f"[{run}] kept {kept} dropped {dropped}")
 
-# web-scraped stills labeled in calib.html image-batch mode
-webdir = ROOT / "data/pool"
-
-
-def _source_map(pool):
-    """image stem -> source video id, from a pool's sources.txt."""
-    out = {}
-    sp = pool / "sources.txt"
-    if not sp.exists():
-        return out
-    for ln in sp.read_text(errors="replace").splitlines():
-        if "\t" not in ln:
-            continue
-        name, url = ln.split("\t")[:2]
-        m = re.search(r"v=([\w-]{11})|youtu\.be/([\w-]{11})", url)
-        vid = (m.group(1) or m.group(2)) if m else Path(url.split("&t=")[0].split("@")[0]).stem
-        out[Path(name).stem] = vid
-    return out
-
-
-# A held-out set is only held out if none of its VIDEOS are trained on. Frames
-# from a stationary camera are near-duplicates of each other, so one training
-# frame from a test venue leaks that venue's exact viewpoint. This was not
-# hypothetical: tallones-usav and tallones-vladimes were reserved as test
-# venues while 12 of their frames sat in the training pool from an earlier
-# session, which silently turned the whole target-PoV benchmark group into a
-# seen-venue score.
-TEST_SOURCES = set(_source_map(ROOT / "data/test").values())
-WEB_SOURCES = _source_map(webdir)
-
 web_kept, web_leaked = 0, []
 for lp in sorted((webdir / "labels").glob("*.json")) if (webdir / "labels").exists() else []:
     if WEB_SOURCES.get(lp.stem) in TEST_SOURCES:
         web_leaked.append(f"{lp.stem} ({WEB_SOURCES[lp.stem]})")
+        continue
+    if WEB_SOURCES.get(lp.stem) not in VENUES:
         continue
     imgp = next((p for e in (".jpg", ".jpeg", ".png") if (p := webdir / (lp.stem + e)).exists()), None)
     if imgp is None:

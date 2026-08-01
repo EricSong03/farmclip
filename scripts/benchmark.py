@@ -229,7 +229,43 @@ def m_search(frame, w, h, ctx):
     return c
 
 
-METHODS = {"v6b": m_v6b, "lineseg": m_lineseg, "classical": m_classical,
+def m_hybrid(frame, w, h, ctx):
+    """Keypoints for the seed, court_search.refine for the finish.
+
+    The two failure modes are complementary. The keypoint model generalises
+    badly to new venues but usually lands in the right neighbourhood; the
+    search cannot generalise badly because nothing about it is trained, but
+    from a blind start it settles in the wrong basin. refine() needs a seed
+    inside its capture radius and supplies an objective built from evidence the
+    detector never saw, so it can correct a pose the detector was confidently
+    wrong about.
+
+    MEASURED AND IT DOES NOT WORK. On the 22-frame held-out set seeded from
+    v9: 9 frames degraded, 0 improved, median 57.7px -> 283.3px, 2/22 passes ->
+    0/22. The damage lands on the BEST seeds -- test_023/024/025/026 went from
+    15-25px, the closest this project has come to a usable pose, to 306-360px.
+
+    guard_img is passed and does not save it. refine minimises mean distance,
+    which slides an already-correct court sideways onto a denser patch of
+    another sport's markings; the coverage guard catches some of that (the
+    frames scoring identically here are ones it rejected) but not the cases
+    that matter. Kept as a documented negative result so the idea is not
+    retried from scratch -- the seed quality is not the binding constraint,
+    the objective is wrong.
+    """
+    from farmclip.court_search import cost_map, refine
+    init = ctx.get("v6b_calib")
+    if init is None:
+        ctx["why"] = "no keypoint seed"
+        return None
+    before = init["err"]
+    c = refine(cost_map(frame), w, h, init, guard_img=frame)
+    ctx["seed_reproj"] = round(before, 1)
+    ctx["moved"] = c is not init
+    return c
+
+
+METHODS = {"v6b": m_v6b, "hybrid": m_hybrid, "lineseg": m_lineseg, "classical": m_classical,
            "search": m_search}
 
 
