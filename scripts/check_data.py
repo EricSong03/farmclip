@@ -27,7 +27,7 @@ DATA = ROOT / "data"
 
 # Directories whose contents are legitimately absent from git: rebuildable from
 # the tracked pool with a seeded command, and large.
-ALLOWED_IGNORED = ("data/dataset/court_v",)
+ALLOWED_IGNORED = ("data/dataset/court_v", "data/dataset/court_c")
 
 
 def git(*args):
