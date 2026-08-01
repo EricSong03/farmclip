@@ -44,6 +44,8 @@ def _ytdlp_cmd():
 
 
 def stream_url(url: str) -> str:
+    if Path(url).exists():   # local file: cv2 opens it directly, no yt-dlp
+        return str(Path(url))
     out = subprocess.run(_ytdlp_cmd() + ["-f", FMT, "-g", "--no-warnings", url],
                          capture_output=True, text=True, timeout=300)
     lines = [l for l in out.stdout.splitlines() if l.startswith("http")]
@@ -53,6 +55,8 @@ def stream_url(url: str) -> str:
 
 
 def video_id(url: str) -> str:
+    if Path(url).exists():
+        return Path(url).stem
     for key in ("v=", "youtu.be/", "/shorts/"):
         if key in url:
             return url.split(key)[1][:11]
@@ -96,6 +100,13 @@ def ensure_meta(vid: str, url: str | None = None):
     """Write meta.json for an interrupted stage run (needs url + fps to pick)."""
     d = STAGE / vid
     if (d / "meta.json").exists():
+        return
+    local = next((p for p in Path("videos").glob(f"{vid}.*")), None)
+    if local is not None:
+        fps = cv2.VideoCapture(str(local)).get(cv2.CAP_PROP_FPS) or 25.0
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "meta.json").write_text(json.dumps({"url": str(local), "fps": fps}, indent=1))
+        print(f"  {vid}: meta.json written from local file (fps {fps})")
         return
     url = url or f"https://www.youtube.com/watch?v={vid}"
     fps = 25.0

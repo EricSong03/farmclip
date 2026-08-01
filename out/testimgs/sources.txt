@@ -20,3 +20,15 @@ test_018.jpg	https://www.youtube.com/watch?v=w2qR0cHw4kk&t=2611s
 test_019.jpg	https://www.youtube.com/watch?v=w2qR0cHw4kk&t=4080s
 test_020.jpg	https://www.youtube.com/watch?v=-Y26D0yccGo&t=1276s
 test_021.jpg	https://www.youtube.com/watch?v=-Y26D0yccGo&t=8236s
+test_022.jpg	videos/tallones-usav.mp4&t=63s
+test_023.jpg	videos/tallones-usav.mp4&t=122s
+test_024.jpg	videos/tallones-usav.mp4&t=202s
+test_025.jpg	videos/tallones-usav.mp4&t=300s
+test_026.jpg	videos/tallones-usav.mp4&t=419s
+test_027.jpg	videos/tallones-usav.mp4&t=498s
+test_028.jpg	videos/tallones-vladimes.mp4&t=71s
+test_029.jpg	videos/tallones-vladimes.mp4&t=160s
+test_030.jpg	videos/tallones-vladimes.mp4&t=227s
+test_031.jpg	videos/tallones-vladimes.mp4&t=316s
+test_032.jpg	videos/tallones-vladimes.mp4&t=405s
+test_033.jpg	videos/tallones-vladimes.mp4&t=538s
