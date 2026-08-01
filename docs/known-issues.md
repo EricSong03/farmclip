@@ -110,3 +110,40 @@ keypoints 197/59 -- slightly larger than docs/icrn-training.md states).
 - "Calibrate" only logs points to console — no pose solve yet.
 - Corner overlay coordinates are normalized to the video *element*, not the video *frame* — letterboxing from `object-fit: contain` will skew clicks. Fix when real solving lands.
 - Net height fixed at 2.43 m (men's); no toggle yet.
+
+## Benchmarking (scripts/benchmark.py)
+
+- **`floor_mask`'s k-means was unseeded** until 2026-07-31. It draws from
+  OpenCV's global RNG, so `calib_score`, `court_search`'s cost map and every
+  stripe detection changed between identical runs — measured on
+  `out/testimgs/test_008`, the SAME pose scored net error 0.95px on one call
+  and 76.58px on the next, i.e. pass and fail. Any "measured" comparison in
+  older docs that involved the floor mask was partly reading the RNG. Fixed
+  with `cv2.setRNGSeed(0)`; `farmclip.lines`'s self-check asserts it.
+- **`floor_mask` kept only ONE floor colour** until 2026-07-31. A coloured
+  court inside a contrasting apron (red-on-teal, orange-on-blue) is the norm in
+  broadcast volleyball; argmax over k-means clusters kept one of the two, so
+  two-tone frames masked 11-13% of the frame where single-tone floors mask
+  38-57% � deleting the court's own painted lines from the evidence map. This
+  made `calib_score` reject two *visibly correct* poses. Now keeps every
+  cluster holding >=20% of the lower frame. Note the direction: the proxy was
+  wrong in the reassuring direction, and only opening the overlay caught it.
+- **8 of the 19 held-out test labellings cannot serve as ground truth.**
+  `benchmark.py` prints the reason per frame. Three (`test_000/002/003`) have
+  every click in ONE vertical plane, which does not constrain a pose at all —
+  and those three fit their clicks at 1.9/0.4/1.5px, the *lowest* residuals in
+  the set. A low click residual is not evidence of a correct pose. To recover
+  them, relabel in `calib.html` with clicks on BOTH sidelines spanning ≥9 m of
+  court length.
+- **No method reaches a usable pose on an unseen venue** (0/11 as of `7dd11bf`).
+  v6b is closest and is not close: median 173px keypoint error, 8.5 m of floor
+  error. On `test_020` it detects 12 keypoints, fits them at **7.1px**, and
+  puts the court on the right half of the real one — 572px from truth. That is
+  the failure every proxy metric in this repo was blind to.
+- **v6b's failure is generalisation, not naming.** Tested and ruled out: every
+  global relabelling (L/R mirror, near/far swap, both, lengthwise shift) scores
+  WORSE than identity. Across 82 detections on 8 frames, median distance to the
+  keypoint they claim to be is 153px and to the nearest court point of *any*
+  name is 90px — only 22 of 82 land within 3% of frame width of any court point
+  at all. They are not real features under wrong names, so no post-processing
+  recovers them. Don't spend time on relabelling schemes; the lever is data.
