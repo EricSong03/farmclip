@@ -12,7 +12,7 @@ picks from contact sheets instead.
   stage:  python -m uv run python scripts/yt_frames.py stage <url> [--n 48]
           -> out/ytstage/<id>/f<frame>.jpg + sheet_NN.jpg contact sheets
   pick:   python -m uv run python scripts/yt_frames.py pick <id> f1234 f5678 ...
-          -> copies those into out/webimgs as web_NNN.jpg + sources.txt lines
+          -> copies those into data/pool as web_NNN.jpg + sources.txt lines
 
 Streams rather than downloads: yt-dlp -g gives a URL cv2 can seek, and a
 video-only mp4 format needs no ffmpeg merge.
@@ -153,10 +153,10 @@ def stage(url: str, n: int):
 
 
 def pick(vid: str, frames: list[str], dest: Path | None = None, prefix="web"):
-    """Promote staged frames. dest defaults to the TRAINING pool (out/webimgs).
+    """Promote staged frames. dest defaults to the TRAINING pool (data/pool).
 
     Pass a different dest for held-out test frames — anything landing in
-    out/webimgs gets labelled and trained on, which would stop it being a test
+    data/pool gets labelled and trained on, which would stop it being a test
     set at all.
     """
     out = Path(dest) if dest else WEB
@@ -193,7 +193,7 @@ def main():
     p = sub.add_parser("pick")
     p.add_argument("vid")
     p.add_argument("frames", nargs="+")
-    p.add_argument("--dest", help="output dir (default out/webimgs = TRAINING pool)")
+    p.add_argument("--dest", help="output dir (default data/pool = TRAINING pool)")
     p.add_argument("--prefix", default="web")
     sh = sub.add_parser("sheets", help="rebuild sheets for staged (or all) vids")
     sh.add_argument("vid", nargs="?")

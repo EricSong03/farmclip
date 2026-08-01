@@ -22,8 +22,8 @@ from calib_eval import score_frame
 
 ROOT = Path(__file__).parent.parent
 RUNS = [(r["name"], ROOT / r["dir"], ROOT / r["video"])
-        for r in json.loads((ROOT / "out/runs.json").read_text())]
-OUT = ROOT / "out/finetune/lineseg"
+        for r in json.loads((ROOT / "data/runs.json").read_text())]
+OUT = ROOT / "data/dataset/lineseg"
 def render_mask(calib, w, h, net_h):
     """uint8 (h,w) class-index map; segments behind camera / far offscreen clipped."""
     mask = np.zeros((h, w), np.uint8)
@@ -87,7 +87,7 @@ for run, outdir, video in RUNS:
     print(f"[{run}] kept {kept} dropped {dropped}")
 run_kept = n_kept
 
-webdir = ROOT / "out/webimgs"
+webdir = ROOT / "data/pool"
 web_kept = 0
 for lp in sorted((webdir / "labels").glob("*.json")) if (webdir / "labels").exists() else []:
     imgp = next((p for e in (".jpg", ".jpeg", ".png") if (p := webdir / (lp.stem + e)).exists()), None)

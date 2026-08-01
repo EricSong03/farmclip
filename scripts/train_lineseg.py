@@ -1,6 +1,6 @@
 """Train the court-line segmentation UNet (Phase 2, line-seg-calib plan).
 
-Data: out/finetune/lineseg (build_lineseg_dataset.py). 9-class UNet, weighted
+Data: data/dataset/lineseg (build_lineseg_dataset.py). 9-class UNet, weighted
 CE + soft dice. Checkpoints: finetune_out/lineseg/{last,best}.pt.
 Usage: python -m uv run python scripts/train_lineseg.py [--steps 30 --batch 2 --device cpu]
 Export: python -m uv run python scripts/train_lineseg.py --export model.onnx
@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 ROOT = Path(__file__).parent.parent
-DATA = ROOT / "out/finetune/lineseg"
+DATA = ROOT / "data/dataset/lineseg"
 CKPT = ROOT / "finetune_out/lineseg"
 N_CLASSES = 9
 

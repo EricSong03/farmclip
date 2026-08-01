@@ -1,5 +1,9 @@
 .claude/settings.local.json
 out/
+# data/ is deliberately NOT ignored. Labelled images, annotations and the built
+# dataset used to live under out/ and were force-added one by one, so anything
+# new was invisible to `git status` -- which is how a whole round of training
+# frames, and the run annotations for four venues, were never committed at all.
 vendor/
 .venv/
 *.pt

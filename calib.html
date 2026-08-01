@@ -37,10 +37,10 @@
 </div>
 
 <script>
-// fallback if out/runs.json missing (stage_clip.py writes it)
+// fallback if data/runs.json missing (stage_clip.py writes it)
 let RUNS = [
-  { name: "menlo",  dir: "out",        frame: "debug/ref_frame.jpg" },
-  { name: "mikasa", dir: "out/mikasa", frame: "debug/ref_frame.jpg" },
+  { name: "menlo",  dir: "data/runs/menlo",  frame: "ref_frame.jpg" },
+  { name: "mikasa", dir: "data/runs/mikasa", frame: "ref_frame.jpg" },
 ];
 const POINTS = [
   "corner_far_left", "corner_far_right", "corner_near_left", "corner_near_right",
@@ -71,13 +71,13 @@ async function getHandle(root, path, opts) {
 $("open").onclick = async () => {
   dir = await showDirectoryPicker({ mode: "readwrite" });
   try {
-    const f = await (await getHandle(dir, "out/runs.json")).getFile();
-    RUNS = JSON.parse(await f.text()).map(r => ({ name: r.name, dir: r.dir, frame: r.ref }));
+    const f = await (await getHandle(dir, "data/runs.json")).getFile();
+    RUNS = JSON.parse(await f.text()).map(r => ({ name: r.name, dir: r.labels || r.dir, frame: r.ref }));
   } catch {} // no runs.json — keep hardcoded fallback
   $("run").innerHTML = RUNS.map((r, i) => `<option value="${i}">${r.name}</option>`).join("");
-  for (const folder of ["webimgs", "testimgs"]) {
+  for (const folder of ["pool", "test"]) {
     try {
-      const wd = await (await dir.getDirectoryHandle("out")).getDirectoryHandle(folder);
+      const wd = await (await dir.getDirectoryHandle("data")).getDirectoryHandle(folder);
       const labeled = new Set();
       try {
         for await (const n of (await wd.getDirectoryHandle("labels")).keys())
@@ -95,7 +95,7 @@ $("open").onclick = async () => {
         webQueues[folder] = q;
         const opt = document.createElement("option");
         opt.value = folder;
-        opt.textContent = folder === "webimgs"
+        opt.textContent = folder === "pool"
           ? `web images (${q.length} unlabeled)`
           : `TEST set - held out (${q.length} unlabeled)`;
         $("run").appendChild(opt);
@@ -114,12 +114,12 @@ $("run").onchange = e => {
 };
 
 const stem = n => n.replace(/\.[^.]+$/, "");
-// Which pool image-batch mode is reading. out/webimgs is the TRAINING pool;
-// out/testimgs is a held-out benchmark that must never be trained on, so it is
+// Which pool image-batch mode is reading. data/pool is the TRAINING pool;
+// data/test is a held-out benchmark that must never be trained on, so it is
 // a separate folder rather than a flag on the same one.
-let webFolder = "webimgs";
+let webFolder = "pool";
 const webDir = async () =>
-  (await dir.getDirectoryHandle("out")).getDirectoryHandle(webFolder);
+  (await dir.getDirectoryHandle("data")).getDirectoryHandle(webFolder);
 
 async function loadWeb(k) {
   webMode = true; webIdx = k;
@@ -134,7 +134,7 @@ async function loadWeb(k) {
   }
   let file;
   try {
-    file = await (await getHandle(dir, `out/${webFolder}/${webQueue[k]}`)).getFile();
+    file = await (await getHandle(dir, `data/${webFolder}/${webQueue[k]}`)).getFile();
   } catch { // file vanished (renumbered/deleted outside) — drop and continue
     webQueue.splice(k, 1);
     return loadWeb(k);
@@ -144,7 +144,7 @@ async function loadWeb(k) {
   // one point over the top of everything previously clicked.
   try {
     const lf = await (await getHandle(
-      dir, `out/${webFolder}/labels/${stem(webQueue[k])}.json`)).getFile();
+      dir, `data/${webFolder}/labels/${stem(webQueue[k])}.json`)).getFile();
     ann = JSON.parse(await lf.text());
     oi = order.findIndex(p => !(p in ann));
     if (oi < 0) oi = order.length;
@@ -246,7 +246,7 @@ function pollOverlay(s, since) {
   pollTimer = setInterval(async () => {
     if (!webMode || pollStem !== s || ++tries > 20) return clearInterval(pollTimer);
     try {
-      const f = await (await getHandle(dir, `out/${webFolder}/overlays/${s}.jpg`)).getFile();
+      const f = await (await getHandle(dir, `data/${webFolder}/overlays/${s}.jpg`)).getFile();
       if (f.lastModified >= since) {
         clearInterval(pollTimer);
         img.src = URL.createObjectURL(f);
@@ -261,7 +261,7 @@ async function save() {
   const out = {};
   for (const [k, v] of Object.entries(ann)) if (v && v[0] !== null) out[k] = v;
   const path = webMode
-    ? `out/${webFolder}/labels/${stem(webQueue[webIdx])}.json`
+    ? `data/${webFolder}/labels/${stem(webQueue[webIdx])}.json`
     : `${runCfg.dir}/annotations.json`;
   const fh = await getHandle(dir, path, { create: true });
   const w = await fh.createWritable();

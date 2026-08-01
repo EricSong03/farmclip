@@ -79,7 +79,7 @@ def floor_mask(frame, k=5, close=25):
     crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
     # Seeded: KMEANS_PP_CENTERS draws from OpenCV's global RNG, so this mask —
     # and therefore calib_score, court_search's cost map and every stripe
-    # detection — used to change run to run. Measured on out/testimgs/test_008:
+    # detection — used to change run to run. Measured on data/test/test_008:
     # the SAME pose scored net error 0.95px and 76.58px on consecutive calls,
     # i.e. pass and fail. Any "measured" comparison taken before this seed was
     # partly reading the RNG.
@@ -90,7 +90,7 @@ def floor_mask(frame, k=5, close=25):
     # Keep EVERY substantial colour of the lower frame, not just the dominant
     # one. A coloured court inside a contrasting apron is the norm in broadcast
     # volleyball, and argmax keeps only one of the two. Measured on
-    # out/testimgs: a red-court/teal-apron frame masked 11% of the frame where
+    # data/test: a red-court/teal-apron frame masked 11% of the frame where
     # single-tone floors mask 38-57%, which deleted the court's own lines from
     # the evidence map and made calib_score reject a visibly CORRECT pose.
     share = np.bincount(bottom.ravel(), minlength=k) / bottom.size

@@ -19,7 +19,7 @@ ROOT = Path(__file__).parent.parent
 RUNS = [("menlo", ROOT / "videos/clip.mp4", ROOT / "out/annotations.json"),
         ("mikasa", ROOT / "videos/mikasa.mp4", ROOT / "out/mikasa/annotations.json")]
 OUT = ROOT / "out/debug/kp_eval"
-NAMES = json.loads((ROOT / "out/finetune/court/kpt_names.json").read_text())
+NAMES = json.loads((ROOT / "data/dataset/court/kpt_names.json").read_text())
 CONF = 0.3
 N_FRAMES = 8
 
@@ -114,7 +114,7 @@ for run, video, ann_path in RUNS:
           if errs_run else f"[{run}] no matched keypoints")
 
 # unseen external images (no GT): pred overlays only, for generalization check
-EXT = ROOT / "out/finetune/court/testimgs"
+EXT = ROOT / "data/dataset/court/testimgs"
 ext_cards = []
 for img_path in sorted(EXT.glob("*.jpg")) + sorted(EXT.glob("*.png")) if EXT.exists() else []:
     frame = cv2.imread(str(img_path))

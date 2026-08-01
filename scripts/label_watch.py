@@ -1,9 +1,9 @@
 """Watch web-image labels and render solved-court overlays for the clicker.
 
 Run alongside calib.html: python -m uv run python scripts/label_watch.py
-For each out/webimgs/labels/<stem>.json (>=5 pts) whose overlay is missing or
+For each data/pool/labels/<stem>.json (>=5 pts) whose overlay is missing or
 stale, solve the camera from the clicks and write the wireframe overlay to
-out/webimgs/overlays/<stem>.jpg with the reprojection error stamped on it.
+data/pool/overlays/<stem>.jpg with the reprojection error stamped on it.
 """
 import json
 import os
@@ -57,10 +57,10 @@ def worst_click(ann, w, h, err, trigger=15.0, ratio=0.3):
 
 
 ROOT = Path(__file__).parent.parent
-# Both pools: out/webimgs is training, out/testimgs is the held-out benchmark.
+# Both pools: data/pool is training, data/test is the held-out benchmark.
 # The clicker can write to either, so the watcher has to render overlays for
 # both or the test set is labelled blind.
-POOLS = [d for d in (ROOT / "out/webimgs", ROOT / "out/testimgs") if d.exists()]
+POOLS = [d for d in (ROOT / "data/pool", ROOT / "data/test") if d.exists()]
 for _p in POOLS:
     (_p / "overlays").mkdir(parents=True, exist_ok=True)
 

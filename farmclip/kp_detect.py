@@ -51,7 +51,7 @@ def parse_pose_output(raw, ratio, pad, conf_min, names) -> dict:
 
 def detect_keypoints(frame, model_path="finetune_out/yolo11s-court.onnx",
                      conf_min=0.5,
-                     names_path="out/finetune/court/kpt_names.json") -> dict:
+                     names_path="data/dataset/court/kpt_names.json") -> dict:
     """BGR frame -> {keypoint name: (u, v)} in original pixel coords."""
     sess = _session(str(model_path))
     inp = sess.get_inputs()[0]

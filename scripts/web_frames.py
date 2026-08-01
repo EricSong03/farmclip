@@ -1,4 +1,4 @@
-"""Dump evenly-spaced frames from a video into out/webimgs for calib.html labeling.
+"""Dump evenly-spaced frames from a video into data/pool for calib.html labeling.
 
 Same bucket as the wikimedia stills: unlabeled web_NNN.jpg + a sources.txt line.
 Label them in calib.html image-batch mode; build_kp_dataset.py picks them up.
@@ -10,7 +10,7 @@ from pathlib import Path
 import cv2
 
 ROOT = Path(__file__).parent.parent
-WEB = ROOT / "out/webimgs"
+WEB = ROOT / "data/pool"
 
 
 def next_index():

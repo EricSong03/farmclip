@@ -8,7 +8,7 @@ share one flaw -- each asks "is there evidence near the projected model?",
 which is trivially satisfied by sliding or shrinking the court onto any dense
 clutter. None asks whether the evidence is EXPLAINED.
 
-out/testimgs fixes that: 19 hand-clicked frames from 11 VODs with zero overlap
+data/test fixes that: 19 hand-clicked frames from 11 VODs with zero overlap
 against the 29 training VODs. solve_labeled on those clicks is a known-correct
 pose, so a method can finally be scored against truth instead of against
 another proxy.
@@ -43,7 +43,7 @@ from farmclip.calibrate import draw_overlay, project, solve_labeled  # noqa: E40
 from farmclip.court import HL, HW, KEYPOINTS, NET_H, depth_span, width_span  # noqa: E402
 from farmclip.track import pixel_to_floor  # noqa: E402
 
-TEST = Path("out/testimgs")
+TEST = Path("data/test")
 BENCH = Path("out/bench")
 
 # A ground-truth pose that is itself doubtful is worse than no ground truth:
@@ -244,7 +244,7 @@ def main():
     print(f"  {len(frames)} usable frames "
           f"(median {np.median([g['err'] for _, _, g, _ in frames]):.1f}px)")
     if not frames:
-        sys.exit("no usable ground truth -- relabel out/testimgs first")
+        sys.exit("no usable ground truth -- relabel data/test first")
 
     if not args.no_overlays:
         (BENCH / "gt").mkdir(parents=True, exist_ok=True)

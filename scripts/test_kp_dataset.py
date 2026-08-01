@@ -1,7 +1,7 @@
 """Sanity check the YOLO pose dataset from build_kp_dataset.py. Plain asserts."""
 from pathlib import Path
 
-OUT = Path(__file__).parent.parent / "out/finetune/court"
+OUT = Path(__file__).parent.parent / "data/dataset/court"
 
 labels = sorted(OUT.glob("labels/*/*.txt"))[:2]
 assert len(labels) == 2, f"need 2 label files, found {len(labels)}"

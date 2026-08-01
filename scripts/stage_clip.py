@@ -1,6 +1,6 @@
 """Stage a video for manual keypoint labeling.
 
-Extracts a ref frame, registers the run in out/runs.json (which calib.html
+Extracts a ref frame, registers the run in data/runs.json (which calib.html
 and build_kp_dataset.py read). Idempotent per run name.
 Usage: python -m uv run python scripts/stage_clip.py <video> [run_name] [t_seconds]
 """
@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from farmclip.video import video_info
 
 ROOT = Path(__file__).parent.parent
-RUNS_JSON = ROOT / "out/runs.json"
+RUNS_JSON = ROOT / "data/runs.json"
 # ponytail: pre-runs.json runs, seeded once on first stage
 SEED = [
     {"name": "menlo", "dir": "out", "ref": "debug/ref_frame.jpg", "video": "videos/clip.mp4"},

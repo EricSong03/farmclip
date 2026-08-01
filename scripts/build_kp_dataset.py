@@ -21,13 +21,16 @@ from farmclip.video import video_info, read_frames
 from calib_eval import score_frame
 
 ROOT = Path(__file__).parent.parent
-if (ROOT / "out/runs.json").exists():
-    RUNS = [(r["name"], ROOT / r["dir"], ROOT / r["video"])
-            for r in json.loads((ROOT / "out/runs.json").read_text())]
+if (ROOT / "data/runs.json").exists():
+    # labels/ not dir/: annotations, calib and the ref frame are tracked data
+    # and live under data/runs/<name>/. dir/ is the pipeline's working output
+    # directory, which is gitignored and may not exist on a fresh clone.
+    RUNS = [(r["name"], ROOT / r.get("labels", r["dir"]), ROOT / r["video"])
+            for r in json.loads((ROOT / "data/runs.json").read_text())]
 else:  # fallback: pre-runs.json layout
     RUNS = [("menlo", ROOT / "out", ROOT / "videos/clip.mp4"),
             ("mikasa", ROOT / "out/mikasa", ROOT / "videos/mikasa.mp4")]
-OUT = ROOT / "out/finetune/court"
+OUT = ROOT / "data/dataset/court"
 NAMES = list(KEYPOINTS)  # canonical 18-slot order
 
 
@@ -87,7 +90,7 @@ for run, outdir, video in RUNS:
     # 741px as-clicked and 315px mirrored -- broken under either convention --
     # and its 30px calib is what poisoned the lineseg masks too.
     try:
-        _ref = cv2.imread(str(outdir / "debug" / "ref_frame.jpg"))
+        _ref = cv2.imread(str(outdir / "ref_frame.jpg"))
         _c = solve_labeled(ann, _ref.shape[1], _ref.shape[0])
         if _c["cam_below_floor"] or _c["err"] > 25:
             print(f"[{run}] SKIPPED - labels solve to {_c['err']:.0f}px"
@@ -105,7 +108,7 @@ for run, outdir, video in RUNS:
         # live here to undo court.py's inverted L/R convention; that is
         # fixed at the source now, so renaming would only reintroduce the
         # ambiguity it was compensating for.
-        ref = cv2.imread(str(outdir / "debug" / "ref_frame.jpg"))
+        ref = cv2.imread(str(outdir / "ref_frame.jpg"))
         ref_med, _ = court_median(ref, calib)
         print(f"[{run}] ref median {ref_med}")
     else:
@@ -135,7 +138,7 @@ for run, outdir, video in RUNS:
     print(f"[{run}] kept {kept} dropped {dropped}")
 
 # web-scraped stills labeled in calib.html image-batch mode
-webdir = ROOT / "out/webimgs"
+webdir = ROOT / "data/pool"
 
 
 def _source_map(pool):
@@ -161,7 +164,7 @@ def _source_map(pool):
 # venues while 12 of their frames sat in the training pool from an earlier
 # session, which silently turned the whole target-PoV benchmark group into a
 # seen-venue score.
-TEST_SOURCES = set(_source_map(ROOT / "out/testimgs").values())
+TEST_SOURCES = set(_source_map(ROOT / "data/test").values())
 WEB_SOURCES = _source_map(webdir)
 
 web_kept, web_leaked = 0, []

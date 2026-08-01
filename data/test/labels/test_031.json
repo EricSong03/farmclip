@@ -1,0 +1,50 @@
+{
+ "corner_far_left": [
+  609,
+  709
+ ],
+ "corner_far_right": [
+  1350,
+  706
+ ],
+ "attack_far_left": [
+  475,
+  759
+ ],
+ "attack_far_right": [
+  1461,
+  756
+ ],
+ "attack_near_left": [
+  201,
+  864
+ ],
+ "attack_near_right": [
+  1695,
+  855
+ ],
+ "center_left": [
+  380,
+  800
+ ],
+ "center_right": [
+  1559,
+  795
+ ],
+ "net_top_left": [
+  345,
+  470
+ ],
+ "net_top_right": [
+  1551,
+  462
+ ],
+ "antenna_tip_left": [
+  351,
+  362
+ ],
+ "antenna_tip_right": [
+  1547,
+  359
+ ]
+}

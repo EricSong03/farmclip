@@ -1,0 +1,42 @@
+{
+ "corner_far_left": [
+  601.5,
+  708.8
+ ],
+ "attack_far_left": [
+  454.5,
+  750.8
+ ],
+ "attack_far_right": [
+  1446,
+  753.8
+ ],
+ "attack_near_left": [
+  160.5,
+  846.8
+ ],
+ "center_left": [
+  331.5,
+  788.3
+ ],
+ "center_right": [
+  1524,
+  790.5
+ ],
+ "net_top_left": [
+  319.5,
+  465
+ ],
+ "net_top_right": [
+  1522.5,
+  465
+ ],
+ "antenna_tip_left": [
+  321,
+  357
+ ],
+ "antenna_tip_right": [
+  1524,
+  352.5
+ ]
+}

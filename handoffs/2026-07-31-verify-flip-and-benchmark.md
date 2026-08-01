@@ -76,7 +76,7 @@ picture, wrong numbers.
    import json,sys,cv2; sys.path.insert(0,'.')
    from pathlib import Path
    from farmclip.calibrate import solve_labeled
-   for r in json.loads(Path('out/runs.json').read_text()):
+   for r in json.loads(Path('data/runs.json').read_text()):
        ap=Path(r['dir'])/'annotations.json'; ref=Path(r['dir'])/'debug/ref_frame.jpg'
        if not (ap.exists() and ref.exists()): continue
        a={k:v for k,v in json.loads(ap.read_text()).items() if not k.startswith('post_')}
@@ -126,10 +126,10 @@ job 2 is worth more than another model.
 
 ### The asset that makes it possible
 
-`out/testimgs/` — **19 hand-labelled frames from 11 YouTube VODs, zero overlap
-with the 29 training VODs.** Labels in `out/testimgs/labels/*.json`,
-provenance in `out/testimgs/sources.txt`. `build_kp_dataset.py` only ever
-reads `out/webimgs`, so this stays held out through any rebuild. `calib.html`
+`data/test/` — **19 hand-labelled frames from 11 YouTube VODs, zero overlap
+with the 29 training VODs.** Labels in `data/test/labels/*.json`,
+provenance in `data/test/sources.txt`. `build_kp_dataset.py` only ever
+reads `data/pool`, so this stays held out through any rebuild. `calib.html`
 exposes it as a separate pool ("TEST set - held out").
 
 These clicks are the ground truth. `solve_labeled` on them gives a

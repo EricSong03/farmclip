@@ -44,7 +44,7 @@ callers; `farmclip.lines`'s self-check now asserts it.
 **`floor_mask` kept only ONE floor colour.** A coloured court inside a
 contrasting apron — a red court on a teal surround, an orange court on blue —
 is the norm in broadcast volleyball, and k-means argmax kept one of the two.
-Measured on `out/testimgs`: two-tone frames masked 11–13% of the frame where
+Measured on `data/test`: two-tone frames masked 11–13% of the frame where
 single-tone floors mask 38–57%, which deleted the court's own painted lines
 from the evidence map. That made `calib_score` reject `test_016` and
 `test_021`, whose overlays are **visibly correct**. Now keeps every cluster
@@ -140,9 +140,9 @@ set the thing that decides whether either worked.
 
 1. **Relabel the 11 rejected frames** (in progress). Everything is judged on 8
    frames until this is done, and 8 cannot separate a real improvement from
-   noise. Their old clicks are parked in `out/testimgs/labels_rejected/`;
+   noise. Their old clicks are parked in `data/test/labels_rejected/`;
    `calib.html` requeues an image as soon as its label is out of
-   `out/testimgs/labels/`.
+   `data/test/labels/`.
 2. **Then retrain — but weight the new data by ANGLE, not by venue count.**
    Splitting the test set by solved camera geometry:
 

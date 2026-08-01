@@ -57,7 +57,7 @@ What: convert `annotations.json` + video → YOLO pose dataset.
   frames whose court median exceeds ~2× the ref frame's (camera moved).
 - Bounding box = bbox of visible keypoints padded 5%. Kpt order = the dict
   order of `court.KEYPOINTS`; missing names → visibility 0.
-- Emit `out/finetune/court/dataset.yaml` (ultralytics pose format:
+- Emit `data/dataset/court/dataset.yaml` (ultralytics pose format:
   `kpt_shape: [18, 3]`, single class `court`).
 - Format reference: asigatchov `coco2yolo_keypoints.py`
   (github.com/asigatchov/Court-Keypoint-Detection) and ultralytics pose docs.
@@ -83,7 +83,7 @@ Verify: merged dataset.yaml still loads; visual spot-check 3 remapped images.
 
 ## Phase 3 — Fine-tune + export
 
-What: `yolo pose train model=yolo11s-pose.pt data=out/finetune/court/dataset.yaml
+What: `yolo pose train model=yolo11s-pose.pt data=data/dataset/court/dataset.yaml
 epochs=100 imgsz=960` (Colab GPU if CPU is painful — dataset is small), then
 `model.export(format="onnx")` → commit weights as `finetune_out/yolo11s-court.pt`
 + ONNX next to the ball models' convention.

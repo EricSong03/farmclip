@@ -17,7 +17,7 @@ calib (video runs: calib.json × sampled frames; web images: solve_web from
 clicks; dome runs: calib.json). Render each court line through the calib as a
 ~5px-wide polyline into a class-index PNG mask alongside the image.
 Reuses build_kp_dataset's frame sampling + drift gate. Output:
-`out/finetune/lineseg/{images,masks}/{train,val}` + meta.json (class names).
+`data/dataset/lineseg/{images,masks}/{train,val}` + meta.json (class names).
 
 ## Phase 2 — model + training (`scripts/train_lineseg.py`)
 

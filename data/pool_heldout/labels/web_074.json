@@ -1,0 +1,22 @@
+{
+ "corner_far_left": [
+  591,
+  702
+ ],
+ "corner_far_right": [
+  1344,
+  697
+ ],
+ "attack_far_left": [
+  464,
+  744
+ ],
+ "attack_far_right": [
+  1455,
+  748
+ ],
+ "attack_near_left": [
+  195,
+  847
+ ]
+}

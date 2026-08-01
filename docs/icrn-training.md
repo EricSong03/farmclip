@@ -26,14 +26,14 @@ Keypoints first, not lineseg, precisely because lineseg is a student of the
 calibs. Better clicks -> better keypoints -> better masks -> better lineseg.
 
 ```
-yolo pose train model=finetune_out/yolo11s-court.pt data=out/finetune/court/dataset.yaml \
+yolo pose train model=finetune_out/yolo11s-court.pt data=data/dataset/court/dataset.yaml \
   epochs=300 imgsz=1280 batch=16 optimizer=AdamW lr0=0.0003 mosaic=0 \
   scale=0.3 translate=0.05 patience=50 device=0 project=finetune_out name=court-pose-v6
 ```
 
 Rules that exist for hard-won reasons: **mosaic=0 always** (NaN crashes on this
 data), keep `imgsz=1280` (matches the deployed ONNX), AdamW `lr0=3e-4`.
-Fix `out/finetune/court/dataset.yaml`'s absolute `path:` if the repo lives
+Fix `data/dataset/court/dataset.yaml`'s absolute `path:` if the repo lives
 somewhere else on the GPU box.
 
 Export when done:

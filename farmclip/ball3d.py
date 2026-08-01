@@ -457,10 +457,17 @@ def lift_with_streaks(track, calib, fps, video, max_gap_s=4.0):
         best = None  # (n_inliers, inlier_rows, anchor_row)
         for anchor_f, anchor_uv, anchor_3d in ((a, end_uv[0], out[a]),
                                                (b, end_uv[1], out[b])):
+            # spike legs live within ~0.7s of a contact, so sample pairs near
+            # THIS anchor — uniform pairs across a multi-second gap almost
+            # never land on one leg (measured 77/80 probe failures that way);
+            # inlier voting below still runs over the whole gap's candidates
+            cw = cand[np.abs(cand[:, 0] - anchor_f) <= 0.7 * fps]
+            if len(cw) < 2:
+                continue
             anchor = np.array([[anchor_f, *anchor_uv, 1, 1.0]])
             depth = float(np.linalg.norm(np.array(anchor_3d) - cam_c))
-            for _ in range(40):
-                pick = cand[rng.choice(len(cand), 2, replace=False)]
+            for _ in range(60):
+                pick = cw[rng.choice(len(cw), 2, replace=False)]
                 if len({int(r[0]) for r in pick} | {anchor_f}) < 3:
                     continue
                 seg = np.vstack([anchor, pick])
@@ -495,7 +502,9 @@ def lift_with_streaks(track, calib, fps, video, max_gap_s=4.0):
                                                   np.ones(len(inl))])])
         seg = seg[np.argsort(seg[:, 0])]
         fit = fit_segment(seg, calib, fps, rms_ok=12.0)
-        if fit is None:
+        # hardest spikes are ~37 m/s; faster = junk streaks (arms/tosses)
+        # that cohered by luck — verified culling a 46 m/s ghost leg
+        if fit is None or np.linalg.norm(fit[3][3:]) > 40.0:
             continue
         p0, v0 = fit[3][:3], fit[3][3:]
         f_ref = int(fit[0][0])

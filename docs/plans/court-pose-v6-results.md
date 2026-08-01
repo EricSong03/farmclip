@@ -59,7 +59,7 @@ v6b it is accepted at 6.9px and 5.2px.
 ## Lineseg refresh: a wash, committed anyway
 
 Masks were regenerated **web-only**. The video runs could not be redone on this
-box — `out/runs.json` is absent and 4 of the 6 run videos are not in the repo —
+box — `data/runs.json` is absent and 4 of the 6 run videos are not in the repo —
 so their masks are unchanged and still carry the 15-30px calib error the
 handoff complains about. The web half went from 62 stale images to **116
 freshly solved venues** (median floor err 3.54px, p90 7.4px, max 16.1px; 6 of
@@ -86,7 +86,7 @@ overlay.
 - The default `torch` wheel now needs a newer driver than this box's 12.8.
   Pin `torch==2.10.0+cu128` / `torchvision==0.25.0+cu128` from the pytorch
   cu128 index after `uv sync`, or CUDA init fails outright.
-- `out/finetune/court/dataset.yaml` has a Windows absolute `path:`. Left as is;
+- `data/dataset/court/dataset.yaml` has a Windows absolute `path:`. Left as is;
   training used a sibling `dataset.linux.yaml` (untracked) so the tracked file
   stays correct for the Windows box.
 - Ultralytics writes runs to `runs/pose/finetune_out/<name>/`, not

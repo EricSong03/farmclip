@@ -125,7 +125,7 @@ def score(img, calib, net_h=None):
     # the floor on purpose. So the net can only be judged when the floor mask
     # happens to spill over it -- otherwise there is no evidence there at all,
     # and _support reports that ABSENCE as a huge error. Measured on
-    # out/testimgs/test_030: a GT pose whose net band visibly lies along the
+    # data/test/test_030: a GT pose whose net band visibly lies along the
     # real net had 0% of that band inside the mask and scored 240px off, while
     # frames where the mask did cover the net scored 0.0px. Same pose quality,
     # opposite verdicts, decided by luck.

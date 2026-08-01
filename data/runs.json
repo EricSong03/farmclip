@@ -1,0 +1,44 @@
+[
+ {
+  "name": "menlo",
+  "dir": "out",
+  "ref": "ref_frame.jpg",
+  "video": "videos/clip.mp4",
+  "labels": "data/runs/menlo"
+ },
+ {
+  "name": "mikasa",
+  "dir": "out/mikasa",
+  "ref": "ref_frame.jpg",
+  "video": "videos/mikasa.mp4",
+  "labels": "data/runs/mikasa"
+ },
+ {
+  "name": "dome1",
+  "dir": "out/dome1",
+  "ref": "ref_frame.jpg",
+  "video": "videos/607421cf-1294-4187-9639-36664df6ac1b.mp4",
+  "labels": "data/runs/dome1"
+ },
+ {
+  "name": "dome2",
+  "dir": "out/dome2",
+  "ref": "ref_frame.jpg",
+  "video": "videos/cceaadb1-669b-4aa3-b717-ec1724e0f3fa.mp4",
+  "labels": "data/runs/dome2"
+ },
+ {
+  "name": "dome3",
+  "dir": "out/dome3",
+  "ref": "ref_frame.jpg",
+  "video": "videos/08e71756-aa52-4ce5-99cf-d25426458408.mp4",
+  "labels": "data/runs/dome3"
+ },
+ {
+  "name": "dome4",
+  "dir": "out/dome4",
+  "ref": "ref_frame.jpg",
+  "video": "videos/f313e15c-413c-4b3e-9770-c22414fb5e1d.mp4",
+  "labels": "data/runs/dome4"
+ }
+]
