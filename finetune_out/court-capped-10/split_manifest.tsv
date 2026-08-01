@@ -1,0 +1,18 @@
+# court_c10: venue-capped ablation split (cap=3 frames/venue, seed 0)
+# Subsetted from data/dataset/court (the committed 216/54 build), NOT built
+# by build_kp_dataset.py -- the 4 dome videos are absent on the training box,
+# so the seeded builder command yields a smaller, different split there.
+# format: <split>	<venue>	<image>
+train	dome3	dome3_00035.jpg
+train	dome3	dome3_00210.jpg
+train	File:Penn_State_Women%27s_Volleyball_warming_up_prior_to_the_2014_Women%27s_Volleyball_National_Championship	web_web_007.jpg
+train	File:Tournoi_volley_Cambrai_2010	web_web_106.jpg
+train	d7Z2dPaV0Cs	web_web_128.jpg
+train	6FEgBmBKtI0	web_web_141.jpg
+train	RTed4c9_-88	web_web_166.jpg
+train	RTed4c9_-88	web_web_167.jpg
+val	dome3	dome3_00266.jpg
+val	File:Marquette_vs._Milwaukee_women%27s_volleyball_2023_19_(in-match_action)	web_web_023.jpg
+val	File:Volleyball-Europaliga_2014_Deutschland_-_Spanien_Aufw%C3%A4rmen	web_web_036.jpg
+val	File:Inside_Sangroksu_Volleyball_Stadium	web_web_089.jpg
+val	File:V.LEAGUE_in_Okinawa_City_Gymnasium_%282%29	web_web_109.jpg

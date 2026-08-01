@@ -1,0 +1,31 @@
+# court_c20: venue-capped ablation split (cap=3 frames/venue, seed 0)
+# Subsetted from data/dataset/court (the committed 216/54 build), NOT built
+# by build_kp_dataset.py -- the 4 dome videos are absent on the training box,
+# so the seeded builder command yields a smaller, different split there.
+# format: <split>	<venue>	<image>
+train	dome2	dome2_00000.jpg
+train	dome2	dome2_00300.jpg
+train	dome3	dome3_00035.jpg
+train	dome3	dome3_00210.jpg
+train	File:Marmi_Lanza	web_web_003.jpg
+train	File:Penn_State_Women%27s_Volleyball_warming_up_prior_to_the_2014_Women%27s_Volleyball_National_Championship	web_web_007.jpg
+train	File:2003_Volleyball_Bundesliga_-_Friedrichshafen_vs_Saulgau	web_web_033.jpg
+train	File:20240309_183317_Fenerbahce_THY_3	web_web_039.jpg
+train	File:French_Volleyball_Super_Cup_2014_-_04	web_web_094.jpg
+train	File:2025_Volleyball%2C_York_Lions_vs_Toronto_Varsity_Blues_02	web_web_102.jpg
+train	File:Tournoi_volley_Cambrai_2010	web_web_106.jpg
+train	File:Incheon_Dowon_Gymnasium	web_web_116.jpg
+train	d7Z2dPaV0Cs	web_web_128.jpg
+train	6VbZpLkxCr4	web_web_132.jpg
+train	6FEgBmBKtI0	web_web_141.jpg
+train	RTed4c9_-88	web_web_166.jpg
+train	RTed4c9_-88	web_web_167.jpg
+train	he7gkJB2t50	web_web_170.jpg
+val	dome2	dome2_00468.jpg
+val	dome3	dome3_00266.jpg
+val	File:Marquette_vs._Milwaukee_women%27s_volleyball_2023_19_(in-match_action)	web_web_023.jpg
+val	File:Volleyball-Europaliga_2014_Deutschland_-_Spanien_Aufw%C3%A4rmen	web_web_036.jpg
+val	File:2025_Volleyball%2C_York_Lions_vs_Nipissing_Lakers_%28OUA_QF%29_03	web_web_078.jpg
+val	File:Inside_Sangroksu_Volleyball_Stadium	web_web_089.jpg
+val	File:V.LEAGUE_in_Okinawa_City_Gymnasium_%282%29	web_web_109.jpg
+val	6VbZpLkxCr4	web_web_131.jpg
