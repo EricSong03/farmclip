@@ -125,6 +125,8 @@ async function loadWeb(k) {
   webMode = true; webIdx = k;
   clearInterval(pollTimer); pollStem = null;
   $("next").style.display = $("bad").style.display = $("prev").style.display = "";
+  $("next").textContent = "next image (n)";
+  $("prev").textContent = "◀ prev image (r)";
   ann = {}; order = POINTS.slice(); oi = 0;
   if (k >= webQueue.length) {
     ctx.clearRect(0, 0, cv.width, cv.height);
@@ -175,8 +177,18 @@ $("fliplr").onclick = () => relabelPoints(k =>
   k.endsWith("_left") ? k.slice(0, -5) + "_right"
   : k.endsWith("_right") ? k.slice(0, -6) + "_left" : k);
 
-$("next").onclick = () => { if (webMode) loadWeb(webIdx + 1); };
-$("prev").onclick = () => { if (webMode && webIdx > 0) loadWeb(webIdx - 1); };
+$("next").onclick = () => {
+  if (webMode) return loadWeb(webIdx + 1);
+  // run mode: step to the next run. Ten runs is too many to drive from the
+  // dropdown, and n/r were dead keys here.
+  const i = RUNS.indexOf(runCfg);
+  if (i >= 0 && i + 1 < RUNS.length) { $("run").value = i + 1; loadRun(i + 1); }
+};
+$("prev").onclick = () => {
+  if (webMode) return webIdx > 0 && loadWeb(webIdx - 1);
+  const i = RUNS.indexOf(runCfg);
+  if (i > 0) { $("run").value = i - 1; loadRun(i - 1); }
+};
 $("bad").onclick = async () => {
   if (!webMode || webIdx >= webQueue.length) return;
   const name = webQueue[webIdx];
@@ -192,21 +204,25 @@ $("bad").onclick = async () => {
 };
 document.addEventListener("keydown", e => {
   if (/SELECT|INPUT/.test(e.target.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-  // s/u are point-level, so they work in run mode too; n/r/d are image nav
+  // s/u/f/g are point-level and n/r navigate, so all work in either mode;
+  // only d (delete the image) is pool-only
   if (e.key === "s") { $("skip").onclick(); return; }
   if (e.key === "u") { $("undo").onclick(); return; }
   if (e.key === "f") { $("flipnf").onclick(); return; }
   if (e.key === "g") { $("fliplr").onclick(); return; }
-  if (!webMode) return;
-  if (e.key === "n") $("next").onclick();
-  if (e.key === "r") $("prev").onclick();
+  if (e.key === "n") { $("next").onclick(); return; }
+  if (e.key === "r") { $("prev").onclick(); return; }
+  if (!webMode) return;          // deleting an image only means something in a pool
   if (e.key === "d") $("bad").onclick();
 });
 
 async function loadRun(i) {
   webMode = false;
   clearInterval(pollTimer); pollStem = null;
-  $("next").style.display = $("bad").style.display = "none";
+  $("bad").style.display = "none";
+  $("next").style.display = $("prev").style.display = "";
+  $("next").textContent = "next run (n)";
+  $("prev").textContent = "◀ prev run (r)";
   runCfg = RUNS[i];
   ann = {};
   try {
