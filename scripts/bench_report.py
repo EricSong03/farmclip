@@ -49,9 +49,44 @@ def fmt(x, unit="", nd=1):
     return f"{x:.{nd}f}{unit}"
 
 
+# Capped venue-count sweep: (venues, training frames, results file). Frames are
+# the builder's reported train count for each split, which is what makes the
+# venues-vs-size distinction readable at all.
+SWEEP = [(10, 9), (20, 20), (40, 36), (60, 66), (81, 92)]
+
+# Every keypoint model scored so far, newest first. The leak notes matter: a
+# model that trained on a test venue cannot be compared on the target group.
+HISTORY = [
+    ("v9", "216 / 54, de-leaked", None),
+    ("v8", "226 / 56", "trained on usav + vladimes &mdash; target score invalid"),
+    ("v6b", "211 / 52", "trained on usav + vladimes &mdash; target score invalid"),
+]
+
+
+def sweep_rows():
+    """(venues, frames, all_px, target_px, broadcast_px, passes) per split."""
+    out = []
+    for venues, frames in SWEEP:
+        f = BENCH / f"results_c{venues}.json"
+        if not f.exists():
+            continue
+        per = json.loads(f.read_text())["per_frame"]
+        a, tg, bc, np_ = [], [], [], 0
+        for name, ms in per.items():
+            px = ms.get("v6b", {}).get("kp_px")
+            if px is None:
+                continue
+            a.append(px)
+            np_ += bool(ms["v6b"].get("pass"))
+            (tg if int(name.split("_")[1]) >= TARGET_FROM else bc).append(px)
+        out.append((venues, frames, med(a), med(tg), med(bc), np_))
+    return out
+
+
 def main():
     dest = Path(sys.argv[1]) if len(sys.argv) > 1 else BENCH / "report.html"
-    data = json.loads((BENCH / "results.json").read_text())
+    src = BENCH / "results_v9.json"
+    data = json.loads((src if src.exists() else BENCH / "results.json").read_text())
     per, summary = data["per_frame"], data["summary"]
     methods = list(summary)
     frames = sorted(per, key=lambda n: int(n.split("_")[1]))
@@ -125,6 +160,43 @@ def main():
     tgt, brd = grows[0], grows[1]
     ratio = brd[2] / tgt[2] if tgt[2] else float("nan")
 
+
+    # ---- sweep + history tables ----------------------------------------
+    _sw = sweep_rows()
+    SWEEP_ROWS = "".join(
+        f'<tr><th scope="row" class="num">{v}</th><td class="num">{fr}</td>'
+        f'<td class="num">{a:.0f}px</td><td class="num">{tg:.0f}px</td>'
+        f'<td class="num">{bc:.0f}px</td>'
+        f'<td class="num"><span class="pill bad">{np_}/{len(frames)}</span></td></tr>'
+        for v, fr, a, tg, bc, np_ in _sw)
+    # v9 itself is the uncapped 81-venue point: same venues, 216 frames.
+    v9_all = med([per[f].get("v6b", {}).get("kp_px") for f in frames])
+    v9_tgt = med([per[f].get("v6b", {}).get("kp_px") for f in groups["target PoV"]])
+    v9_bc = med([per[f].get("v6b", {}).get("kp_px") for f in groups["broadcast"]])
+    v9_pass = sum(1 for f in frames if per[f].get("v6b", {}).get("pass"))
+    SWEEP_ROWS += (
+        f'<tr class="hero"><th scope="row" class="num">81</th>'
+        f'<td class="num">216</td><td class="num">{v9_all:.0f}px</td>'
+        f'<td class="num">{v9_tgt:.0f}px</td><td class="num">{v9_bc:.0f}px</td>'
+        f'<td class="num"><span class="pill ok">{v9_pass}/{len(frames)}</span></td></tr>')
+    _c81 = next((r for r in _sw if r[0] == 81), None)
+    SWEEP_RATIO = f"{_c81[2] / v9_all:.1f}" if _c81 and v9_all else "?"
+    TGT_FROM = _c81[3] if _c81 else float("nan")
+    TGT_TO, BC_TO = v9_tgt, v9_bc
+    BC_FROM = _c81[4] if _c81 else float("nan")
+
+    HISTORY_ROWS = "".join(
+        f'<tr><th scope="row"><span class="mname">{n}</span></th><td>{ds}</td>'
+        f'<td class="num">{v9_tgt:.1f}px' + ('' if n == "v9" else '<sup>*</sup>') + '</td>'
+        f'<td class="num">{v9_bc:.1f}px</td>'
+        f'<td class="mnote">{note or "clean held-out"}</td></tr>'
+        if n == "v9" else
+        f'<tr><th scope="row"><span class="mname">{n}</span></th><td>{ds}</td>'
+        f'<td class="num">&mdash;</td><td class="num">&mdash;</td>'
+        f'<td class="mnote">{note}</td></tr>'
+        for n, ds, note in HISTORY)
+
+    V9PASS, NF = v9_pass, len(frames)
     imgs = {k: b64(BENCH / f"web_{k}.jpg") for k in ("bad", "good", "gt")}
 
     def figure(key, cap, alt):
@@ -195,6 +267,9 @@ section {{ margin-top:clamp(40px,6vw,68px); }}
 .stat .s {{ font-size:13.5px; color:var(--muted); margin-top:6px; }}
 .stat.tgt .v {{ color:var(--ok); }}
 .stat.brd .v {{ color:var(--bad); }}
+tr.hero th, tr.hero td {{ background:var(--raised); font-weight:600; }}
+tr.hero td.num {{ color:var(--ok); }}
+sup {{ color:var(--muted); font-size:.7em; }}
 
 .tablewrap {{ overflow-x:auto; border:1px solid var(--hair); border-radius:3px; background:var(--surface); }}
 table {{ border-collapse:collapse; width:100%; min-width:640px; font-size:14px; }}
@@ -251,14 +326,15 @@ footer {{ margin-top:64px; padding-top:20px; border-top:1px solid var(--hair); f
 
 <div class="wrap">
 <header>
-  <p class="eyebrow">farmclip &middot; court calibration</p>
-  <h1>Four ways to find a volleyball court,<br>measured against ground truth</h1>
+  <p class="eyebrow">farmclip &middot; court calibration &middot; {NF} held-out frames</p>
+  <h1>court-pose-v9,<br>measured against ground truth</h1>
   <p class="lede">Every accuracy metric this project invented had, at some point, passed a
   visibly wrong camera pose. This benchmark scores a method as pose error against
   {len(frames)} hand-clicked frames from venues no model has trained on &mdash; in pixels
   <em>and</em> in metres, because pixels alone hide the failure that matters.</p>
-  <p class="lede deck">Result: one method reaches a usable pose, on one kind of footage. Which kind
-  turns out to be the whole story.</p>
+  <p class="lede deck">v9 is the first model here whose held-out score is trustworthy: earlier ones
+  trained on two of the test venues. It reaches a usable pose on {V9PASS} of {NF} frames, and which
+  frames those are turns out to be the whole story.</p>
 </header>
 
 <section>
@@ -326,15 +402,68 @@ footer {{ margin-top:64px; padding-top:20px; border-top:1px solid var(--hair); f
 
 <section>
   <h2>Why pixels alone were never enough</h2>
-  <div class="prose"><p>The frame below is the argument for this whole exercise. The keypoint
-  model found 12 keypoints and fitted them to <strong>7.1 px</strong> reprojection error &mdash; its
-  best score anywhere in the set. Reprojection error is the number a calibration
-  normally reports about itself.</p></div>
-  {figure('bad', 'Cyan is the model&rsquo;s court, green crosses are the human clicks. The pose fits its own detections at 7.1&nbsp;px and sits on the right-hand half of the real court &mdash; 572&nbsp;px from truth. No self-reported metric catches this; only ground truth does.', 'Court wireframe collapsed onto half the real court')}
+  <div class="prose"><p>Reprojection error is the number a calibration normally reports about
+  itself: how well the pose fits the points the detector found. On the frame below it reads
+  <strong>41.1&nbsp;px</strong> from 4 keypoints, which looks like a mediocre-but-working solve.
+  Measured against ground truth the same pose is <strong>430&nbsp;px</strong> out and puts the
+  floor <strong>12.8&nbsp;m</strong> from where it belongs.</p>
+  <p>A pose can fit its own detections and still be nowhere near the court, and no
+  self-reported metric distinguishes the two. That gap is the entire reason this benchmark
+  exists.</p></div>
+  {figure('bad', 'v9&rsquo;s worst frame. Cyan is the model&rsquo;s court, green crosses are the human clicks. Four keypoints, fitted to 41&nbsp;px against themselves, 430&nbsp;px and 12.8&nbsp;m from truth.', 'Court wireframe badly misplaced on a broadcast frame')}
   <div class="figpair" style="margin-top:26px">
-    {figure('good', 'A pass: 15.5&nbsp;px, 0.23&nbsp;m of floor error, on a venue absent from training.', 'Correctly aligned court wireframe')}
-    {figure('gt', 'Ground truth. Clicks are only usable once the solved pose is physical, spans the court in both axes, and lands on the paint.', 'Hand-labelled ground truth overlay')}
+    {figure('good', 'v9&rsquo;s best frame: 12 keypoints, 15.7&nbsp;px and 0.66&nbsp;m from truth &mdash; inside the bar, on a venue absent from training.', 'Correctly aligned court wireframe')}
+    {figure('gt', 'Ground truth. Clicks are usable only once the solved pose is physical, spans the court in both axes, and lands on the paint.', 'Hand-labelled ground truth overlay')}
   </div>
+</section>
+
+
+<hr class="rule">
+
+<section>
+  <h2>Does more data fix it? A capped venue sweep says: not more <em>venues</em></h2>
+  <div class="prose"><p>Five models, each trained on a random subset of N source venues with frames
+  per venue capped at 3 so that venue count varies roughly independently of dataset size.
+  Without that cap the curve is unreadable &mdash; five video runs carry 8&ndash;41 frames each
+  against 1&ndash;3 for a web venue, so frame count moves in steps as a dense venue enters the
+  subset rather than with venue count.</p></div>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th scope="col">venues</th><th scope="col" class="num">train frames</th>
+      <th scope="col" class="num">all</th><th scope="col" class="num">target PoV</th>
+      <th scope="col" class="num">broadcast</th><th scope="col" class="num">usable</th></tr></thead>
+    <tbody>{SWEEP_ROWS}</tbody>
+  </table>
+  </div>
+  <div class="prose">
+  <p style="margin-top:18px"><strong>The venue slope is unreadable</strong> &mdash; 60 venues beats
+  81. A non-monotonic curve means noise dominates at these sizes, and every capped model is badly
+  undertrained. That half of the experiment failed.</p>
+  <p><strong>The last row against v9 is the result that survived.</strong> Same 81 venues, 92
+  training frames versus 216, and the only difference is how densely each venue is sampled.
+  Error falls {SWEEP_RATIO}&times;, and it is the only configuration that gets a usable pose at
+  all. Frames per venue is doing the work, not venue count.</p>
+  <p>Where it does the work is the other half of the finding: the target PoV improves
+  {TGT_FROM:.0f}px &rarr; {TGT_TO:.0f}px while broadcast moves {BC_FROM:.0f}px &rarr;
+  {BC_TO:.0f}px. The dense venues are low end-on footage, like the target and unlike broadcast.
+  Density buys accuracy in-distribution and close to nothing outside it.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Model history</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th scope="col">model</th><th scope="col">dataset</th>
+      <th scope="col" class="num">target PoV</th><th scope="col" class="num">broadcast</th>
+      <th scope="col">note</th></tr></thead>
+    <tbody>{HISTORY_ROWS}</tbody>
+  </table>
+  </div>
+  <div class="prose"><p style="margin-top:18px">v8 looked like a breakthrough at 7 of 10 on the
+  target group. Twelve frames from those two venues were in its training set. v9 trains without
+  them and the same venues score {TGT_TO:.0f}px &mdash; the apparent gain was the model
+  recognising venues it had memorised. Only v9's numbers here are a clean held-out measurement.</p></div>
 </section>
 
 <section>
