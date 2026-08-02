@@ -33,3 +33,6 @@ court/_quarantine/
 # copy of the images. The pool and the seed are the tracked source of truth.
 data/dataset/court_v*/
 data/dataset/court_c*/
+
+# Run overlays are rendered by label_watch from the annotation; derived, not data.
+data/runs/*/overlay.jpg

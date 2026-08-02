@@ -28,6 +28,8 @@ DATA = ROOT / "data"
 # Directories whose contents are legitimately absent from git: rebuildable from
 # the tracked pool with a seeded command, and large.
 ALLOWED_IGNORED = ("data/dataset/court_v", "data/dataset/court_c")
+# label_watch renders these from the annotations; regenerable, not data.
+ALLOWED_SUFFIX = ("/overlay.jpg",)
 
 
 def git(*args):
@@ -43,8 +45,11 @@ def main():
                for p in DATA.rglob("*") if p.is_file()}
     tracked = set(git("ls-files", "data"))
     missing = sorted(on_disk - tracked)
-    allowed = [m for m in missing if m.startswith(ALLOWED_IGNORED)]
-    problems = [m for m in missing if not m.startswith(ALLOWED_IGNORED)]
+    def _ok(m):
+        return m.startswith(ALLOWED_IGNORED) or m.endswith(ALLOWED_SUFFIX)
+
+    allowed = [m for m in missing if _ok(m)]
+    problems = [m for m in missing if not _ok(m)]
 
     # Distinguish "ignored" from "merely untracked" -- ignored is the dangerous
     # one, because `git status` stays silent about it.

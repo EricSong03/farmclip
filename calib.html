@@ -244,9 +244,12 @@ function pollOverlay(s, since) {
   pollStem = s;
   let tries = 0;
   pollTimer = setInterval(async () => {
-    if (!webMode || pollStem !== s || ++tries > 20) return clearInterval(pollTimer);
+    if (pollStem !== s || ++tries > 20) return clearInterval(pollTimer);
     try {
-      const f = await (await getHandle(dir, `data/${webFolder}/overlays/${s}.jpg`)).getFile();
+      // runs keep their overlay beside the annotation; image pools use overlays/
+      const path = webMode ? `data/${webFolder}/overlays/${s}.jpg`
+                           : `${runCfg.dir}/overlay.jpg`;
+      const f = await (await getHandle(dir, path)).getFile();
       if (f.lastModified >= since) {
         clearInterval(pollTimer);
         img.src = URL.createObjectURL(f);
@@ -270,8 +273,11 @@ async function save() {
   setTimeout(() => {
     $("saved").textContent = webMode ? `${webIdx + 1} / ${webQueue.length} unlabeled` : "";
   }, 1000);
-  if (webMode && Object.keys(out).length >= 5)
-    pollOverlay(stem(webQueue[webIdx]), Date.now() - 3000);
+  // runs need this as much as image pools do — labelling a run blind is how
+  // a single bad click ends up applied to 40 training frames instead of 1
+  if (Object.keys(out).length >= 5)
+    pollOverlay(webMode ? stem(webQueue[webIdx]) : runCfg.name,
+                Date.now() - 3000);
 }
 
 cv.addEventListener("click", e => {
