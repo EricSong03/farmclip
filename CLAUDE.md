@@ -7,8 +7,10 @@ Turn stationary(ish) volleyball gameplay video into a 3D model of the game. Curr
 - `index.html` — the whole app so far. No build step, no dependencies to install (three.js from CDN). Open directly in a browser.
   - Left: video upload (local object URL, nothing leaves the machine) + canvas overlay for clicking calibration points.
   - Right: three.js render of a regulation FIVB court (18×9 m, attack lines at 3 m, net at 2.43 m) with orbit controls.
-  - "Calibrate" is a stub — logs clicked points to console.
-- `label.html` — ball-label checker (Chrome/Edge): pick the repo folder once, it auto-loads clips + label csvs (runs hardcoded in `RUNS`), serves random suspect frames balanced across clips, click to correct / `x` to reject, auto-saves to `out/finetune/ball/<name>.labeled.csv` (resumes from it).
+  - Viewer is built (all 3 phases of docs/plans/3d-viewer.md): loads scene JSON,
+    renders ball + players, video-as-master-clock sync. Court clicking lives in
+    `calib.html`, not here.
+- `label.html` — ball-label checker (Chrome/Edge): pick the repo folder once, it auto-loads clips + label csvs (runs hardcoded in `RUNS`), serves random suspect frames balanced across clips, click to correct / `x` to reject, auto-saves to `data/ball/<name>.labeled.csv` (resumes from it).
 - `examples/` — reference screenshots/clips of real PoVs we're targeting.
 
 ## Chosen approach (see docs/specs/ and docs/plans/roadmap.md "Decisions")
@@ -26,5 +28,8 @@ Acceptance per stage: render overlay debug frames (projections drawn on real foo
 ## Conventions
 
 - Keep it minimal: static front end, offline Python pipeline, no server.
-- Court model constants live in `index.html` (`COURT_L`, `COURT_W`, `NET_H`, ...). Meters, Y-up, origin at court center under the net.
+- Court model constants exist TWICE: `farmclip/court.py` (authoritative for the
+  pipeline) and `index.html` (the viewer's own copy, no build step to share it).
+  Meters, Y-up, origin at court center under the net. Change one, change both —
+  a sign convention that disagreed between them cost a full session once.
 - Docs: `docs/specs/` for what to build, `docs/plans/` for how/when, `docs/known-issues.md` for gotchas discovered from real footage.

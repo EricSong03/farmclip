@@ -32,7 +32,7 @@
   <span class="k">x</span> no ball &amp; next ·
   <span class="k">click</span> correct position ·
   <span class="k">&larr;/&rarr;</span> back / forward ·
-  corrections auto-save to <code>out/finetune/ball/&lt;name&gt;.labeled.csv</code>
+  corrections auto-save to <code>data/ball/&lt;name&gt;.labeled.csv</code>
 </div>
 <video id="vid" style="display:none" muted preload="auto"></video>
 
@@ -106,8 +106,8 @@ $("open").onclick = async () => {
   dir = await showDirectoryPicker({ mode: "readwrite" });
   runs = [];
   for (const cfg of RUNS) {
-    const rows = await readCsv(`out/finetune/ball/${cfg.name}.labeled.csv`)
-              || await readCsv(`out/finetune/ball/${cfg.name}.csv`);
+    const rows = await readCsv(`data/ball/${cfg.name}.labeled.csv`)
+              || await readCsv(`data/ball/${cfg.name}.csv`);
     if (!rows) continue;
     classify(rows, await firstSubdirCsv(`${cfg.balls}/ball0`),
                    await firstSubdirCsv(`${cfg.balls}/ball1`));
@@ -203,7 +203,7 @@ function autosave(run) {
   saveTimers[run.cfg.name] = setTimeout(async () => {
     const csv = "Frame,Visibility,X,Y,Checked\n" +
       run.rows.map(r => `${r.frame},${r.vis},${r.x},${r.y},${r.status}`).join("\n");
-    const fh = await getHandle(dir, `out/finetune/ball/${run.cfg.name}.labeled.csv`, { create: true });
+    const fh = await getHandle(dir, `data/ball/${run.cfg.name}.labeled.csv`, { create: true });
     const w = await fh.createWritable();
     await w.write(csv); await w.close();
     run.dirty = false;

@@ -105,11 +105,11 @@ keypoints 197/59 -- slightly larger than docs/icrn-training.md states).
 - **Distractor lines everywhere.** Multi-sport floors (badminton/basketball lines) and adjacent courts defeat naive line detection. Any automatic detector must be trained/scoped to "the court being played on."
 - **Pan/zoom videos.** A single calibration won't hold; needs per-N-frame refresh (planned, not built).
 
-## Stub (index.html)
+## Viewer (index.html)
 
-- "Calibrate" only logs points to console — no pose solve yet.
-- Corner overlay coordinates are normalized to the video *element*, not the video *frame* — letterboxing from `object-fit: contain` will skew clicks. Fix when real solving lands.
-- Net height fixed at 2.43 m (men's); no toggle yet.
+- Court constants are duplicated from `farmclip/court.py` — no build step shares
+  them. They agree today; nothing enforces that they keep agreeing.
+- Net height comes from the scene JSON's `net_height`; there is no UI toggle.
 
 ## Benchmarking (scripts/benchmark.py)
 
