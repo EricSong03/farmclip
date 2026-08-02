@@ -55,11 +55,13 @@ if (ROOT / "data/runs.json").exists():
     # labels/ not dir/: annotations, calib and the ref frame are tracked data
     # and live under data/runs/<name>/. dir/ is the pipeline's working output
     # directory, which is gitignored and may not exist on a fresh clone.
-    RUNS = [(r["name"], ROOT / r.get("labels", r["dir"]), ROOT / r["video"])
+    RUNS = [(r["name"], ROOT / r.get("labels", r["dir"]),
+             ROOT / r["video"] if r.get("video") else None,
+             ROOT / r["frames"] if r.get("frames") else None)
             for r in json.loads((ROOT / "data/runs.json").read_text())]
 else:  # fallback: pre-runs.json layout
-    RUNS = [("menlo", ROOT / "out", ROOT / "videos/clip.mp4"),
-            ("mikasa", ROOT / "out/mikasa", ROOT / "videos/mikasa.mp4")]
+    RUNS = [("menlo", ROOT / "out", ROOT / "videos/clip.mp4", None),
+            ("mikasa", ROOT / "out/mikasa", ROOT / "videos/mikasa.mp4", None)]
 OUT = ROOT / "data/dataset" / ARGS.out
 NAMES = list(KEYPOINTS)  # canonical 18-slot order
 
@@ -155,7 +157,7 @@ else:
     VENUES = set(ALL_VENUES)
 
 kept_all, n_kept = [], 0
-for run, outdir, video in RUNS:
+for run, outdir, video, framedir in RUNS:
     if run not in VENUES:
         continue
     if not (outdir / "annotations.json").exists():
@@ -189,22 +191,37 @@ for run, outdir, video in RUNS:
         ref = cv2.imread(str(outdir / "ref_frame.jpg"))
         ref_med, _ = court_median(ref, calib)
         print(f"[{run}] ref median {ref_med}")
+    elif framedir is not None:
+        # No calib.json yet, but a frame-dir run NEEDS a gate: a broadcast feed
+        # cuts to replays, closeups and other cameras, and one annotation is
+        # wrong for every one of those. Solve the gate's reference pose from
+        # the annotation itself rather than keeping everything.
+        calib = _c
+        ref = cv2.imread(str(outdir / "ref_frame.jpg"))
+        ref_med, _ = court_median(ref, calib)
+        print(f"[{run}] gate from annotation, ref median {ref_med}")
     else:
         print(f"[{run}] no calib.json — drift gate off, keeping all sampled frames")
-    if not video.exists():
+
+    if framedir is not None:
+        frames_iter = ((i, 0.0, cv2.imread(str(f)))
+                       for i, f in enumerate(sorted(framedir.glob("*.jpg"))))
+    elif video is None or not video.exists():
         # videos/ is untracked and mostly absent on other machines, so a clone
         # silently builds a web-only dataset that is NOT comparable to one built
         # here. Say so loudly rather than producing a quietly different split.
-        print(f"[{run}] VIDEO MISSING ({video.name}) - this run contributes "
-              f"NOTHING. A dataset built without it is not comparable to one "
-              f"built where the videos exist.")
+        print(f"[{run}] VIDEO MISSING ({video.name if video else '?'}) - this run "
+              f"contributes NOTHING. A dataset built without it is not comparable "
+              f"to one built where the videos exist.")
         continue
-    # Sample toward the cap rather than taking the first N, so the frames stay
-    # spread across the clip instead of clustering at its start.
-    _target = ARGS.cap if ARGS.cap else 40
-    step = max(1, video_info(video)["frames"] // max(_target, 1))
+    else:
+        _target = ARGS.cap if ARGS.cap else 40
+        step = max(1, video_info(video)["frames"] // max(_target, 1))
+        frames_iter = read_frames(video, step=step)
     kept = dropped = 0
-    for i, t, frame in read_frames(video, step=step):
+    for i, _t, frame in frames_iter:
+        if frame is None:
+            continue
         if calib is None:
             ok = True
         else:

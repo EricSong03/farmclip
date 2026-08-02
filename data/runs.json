@@ -40,5 +40,81 @@
   "ref": "ref_frame.jpg",
   "video": "videos/f313e15c-413c-4b3e-9770-c22414fb5e1d.mp4",
   "labels": "data/runs/dome4"
+ },
+ {
+  "name": "tallones-evl",
+  "dir": "out/tallones-evl",
+  "ref": "ref_frame.jpg",
+  "video": "videos/tallones-evl.mp4",
+  "labels": "data/runs/tallones-evl"
+ },
+ {
+  "name": "tallones-oos",
+  "dir": "out/tallones-oos",
+  "ref": "ref_frame.jpg",
+  "video": "videos/tallones-oos-dallas.mp4",
+  "labels": "data/runs/tallones-oos"
+ },
+ {
+  "name": "tallones-vlacup",
+  "dir": "out/tallones-vlacup",
+  "ref": "ref_frame.jpg",
+  "video": "videos/tallones-vlacup.mp4",
+  "labels": "data/runs/tallones-vlacup"
+ },
+ {
+  "name": "tallones-vlawest",
+  "dir": "out/tallones-vlawest",
+  "ref": "ref_frame.jpg",
+  "video": "videos/tallones-vlawest.mp4",
+  "labels": "data/runs/tallones-vlawest"
+ },
+ {
+  "name": "bc-lnarena",
+  "dir": "out/bc-lnarena",
+  "ref": "ref_frame.jpg",
+  "frames": "data/runs/bc-lnarena/frames",
+  "source": "0pXfDmucbhk",
+  "labels": "data/runs/bc-lnarena"
+ },
+ {
+  "name": "bc-perugia",
+  "dir": "out/bc-perugia",
+  "ref": "ref_frame.jpg",
+  "frames": "data/runs/bc-perugia/frames",
+  "source": "Z9eEWmLb0QQ",
+  "labels": "data/runs/bc-perugia"
+ },
+ {
+  "name": "bc-wislutheran",
+  "dir": "out/bc-wislutheran",
+  "ref": "ref_frame.jpg",
+  "frames": "data/runs/bc-wislutheran/frames",
+  "source": "ifHkpb6XGg4",
+  "labels": "data/runs/bc-wislutheran"
+ },
+ {
+  "name": "bc-pineview",
+  "dir": "out/bc-pineview",
+  "ref": "ref_frame.jpg",
+  "frames": "data/runs/bc-pineview/frames",
+  "source": "sOQzuu4Jenw",
+  "labels": "data/runs/bc-pineview"
+ },
+ {
+  "name": "bc-nebraska",
+  "dir": "out/bc-nebraska",
+  "ref": "ref_frame.jpg",
+  "frames": "data/runs/bc-nebraska/frames",
+  "source": "jrP39pe-qIY",
+  "labels": "data/runs/bc-nebraska"
+ },
+ {
+  "name": "bc-ncaaqf",
+  "dir": "out/bc-ncaaqf",
+  "ref": "ref_frame.jpg",
+  "frames": "data/runs/bc-ncaaqf/frames",
+  "source": "1JMc6mQjknI",
+  "labels": "data/runs/bc-ncaaqf"
  }
 ]
